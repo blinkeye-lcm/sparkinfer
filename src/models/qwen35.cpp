@@ -130,12 +130,13 @@ int Qwen35Model::forward_token(int token_id, int position) {
     kernels::launch_embedding(s.d_tok, s.w.embed_tokens, s.x, 1, H, st);
 
     int* btable = s.kv->block_table(s.seq_id);
+    // Prime: xn = RMSNorm(x, layer0.input_norm). Each layer's tail then fuses the
+    // post-MoE residual with the NEXT layer's input norm (or final_norm), so the
+    // per-layer input RMSNorm + two residual-adds collapse into two fused kernels.
+    kernels::launch_rmsnorm(s.x, s.w.layers[0].input_norm, s.xn, 1, H, c.rms_eps, st);
+
     for (int L = 0; L < c.n_layers; L++) {
         const Qwen35LayerWeights& w = s.w.layers[L];
-        kernels::launch_rmsnorm(s.x, w.input_norm, s.xn, 1, H, c.rms_eps, st);
-#ifdef SPARKINFER_SKIP_ATTN
-        cudaMemcpyAsync(s.h, s.x, (size_t)H * sizeof(bf16), cudaMemcpyDeviceToDevice, st);  // ablation
-#else
         if (s.gguf) {   // GGUF dense weights are native [out,in] -> coalesced GEMV
             kernels::launch_gemv(s.xn, w.wq, s.q, s.qdim,  H, st);
             kernels::launch_gemv(s.xn, w.wk, s.k, s.kvdim, H, st);
@@ -145,7 +146,6 @@ int Qwen35Model::forward_token(int token_id, int position) {
             kernels::launch_gemm(s.xn, w.wk, s.k, 1, s.kvdim, H, 1.f, 0.f, gc, st);
             kernels::launch_gemm(s.xn, w.wv, s.v, 1, s.kvdim, H, 1.f, 0.f, gc, st);
         }
-        // per-head QK-norm (rows = heads, cols = head_dim)
         kernels::launch_rmsnorm(s.q, w.q_norm, s.q, c.n_q_heads,  c.head_dim, c.rms_eps, st);
         kernels::launch_rmsnorm(s.k, w.k_norm, s.k, c.n_kv_heads, c.head_dim, c.rms_eps, st);
         kernels::launch_rope(s.q, s.k, s.d_pos, 1, c.n_q_heads, c.n_kv_heads, c.head_dim, c.rope_theta, st);
@@ -154,24 +154,16 @@ int Qwen35Model::forward_token(int token_id, int position) {
         bf16* vpool = (bf16*)s.kv->v_pool() + (size_t)L * s.kv->layer_stride_elems();
         launch_kv_append(kpool, vpool, s.k, s.v, btable, s.d_writepos, 1,
                          c.n_kv_heads, c.head_dim, s.kv->block_size(), s.kv->max_blocks_per_seq(), st);
-#ifdef SPARKINFER_SKIP_GQA
-        cudaMemsetAsync(s.attn, 0, (size_t)s.qdim * sizeof(bf16), st);  // ablation: isolate gqa kernel
-#else
         kernels::launch_flash_decode_split(s.q, kpool, vpool, btable, s.d_seqlen, s.attn,
                                            s.fa_m, s.fa_l, s.fa_acc, 1, c.n_q_heads, c.n_kv_heads, c.head_dim,
                                            s.kv->block_size(), s.kv->max_blocks_per_seq(), s.n_splits,
                                            1.f / sqrtf((float)c.head_dim), st);
-#endif
-
         if (s.gguf) kernels::launch_gemv(s.attn, w.wo, s.ao, H, s.qdim, st);
         else        kernels::launch_gemm(s.attn, w.wo, s.ao, 1, H, s.qdim, 1.f, 0.f, gc, st);
-        launch_residual_add(s.x, s.ao, s.h, H, st);
-#endif
-        kernels::launch_rmsnorm(s.h, w.post_attn_norm, s.hn, 1, H, c.rms_eps, st);
 
-#ifdef SPARKINFER_SKIP_MOE
-        cudaMemsetAsync(s.routed, 0, (size_t)num_seqs * H * sizeof(bf16), st);  // ablation: isolate MoE cost
-#else
+        // fused: h = x + ao ; hn = RMSNorm(h, post_attn_norm)
+        kernels::launch_add_rmsnorm2(s.x, s.ao, w.post_attn_norm, s.h, s.hn, 1, H, c.rms_eps, st);
+
         if (w.gate_q) {   // GGUF fused: route, then dequant-on-read only the top_k experts
             kernels::launch_gemv_f32(s.hn, w.router_w, s.mf_logits, c.n_experts, c.hidden, st);  // router_w native [E,H]
             cu(cudaMemsetAsync(s.mf_counts, 0, c.n_experts * sizeof(int), st), "mf counts");
@@ -185,24 +177,20 @@ int Qwen35Model::forward_token(int token_id, int position) {
             s.engine->set_layer_weights(L, {w.router_w, w.gate, w.up, w.down});
             s.engine->forward(s.hn, s.routed, 1, L, st);
         }
-#endif
         if (c.n_shared > 0) {
             kernels::launch_moe_expert_ffn(s.hn, w.shared_gate, w.shared_up, w.shared_down,
                                            s.d_shared_ids, s.d_shared_w, s.shared,
                                            1, 1, 1, H, c.moe_ffn, st);
             launch_residual_add(s.routed, s.shared, s.routed, H, st);
         }
-        launch_residual_add(s.h, s.routed, s.x, H, st);
+        // fused: x = h + routed ; xn = RMSNorm(x, next input_norm or final_norm)
+        const void* nextnorm = (L + 1 < c.n_layers) ? s.w.layers[L + 1].input_norm : s.w.final_norm;
+        kernels::launch_add_rmsnorm2(s.h, s.routed, nextnorm, s.x, s.xn, 1, H, c.rms_eps, st);
     }
-
-    kernels::launch_rmsnorm(s.x, s.w.final_norm, s.xn, 1, H, c.rms_eps, st);
-#ifdef SPARKINFER_SKIP_LMHEAD
-    cudaMemsetAsync(s.d_out_id, 0, sizeof(int), st);  // ablation
-#else
+    // xn now holds RMSNorm(x_final, final_norm)
     if (s.gguf) kernels::launch_gemv_f32(s.xn, s.w.lm_head, s.logits, c.vocab, H, st);  // lm_head native [vocab,H]
     else        kernels::launch_linear_f32(s.xn, s.w.lm_head, s.logits, 1, c.vocab, H, st);
     kernels::launch_argmax(s.logits, s.d_out_id, 1, c.vocab, st);
-#endif
 
     cu(cudaStreamEndCapture(st, &s.cu_graph), "end capture");
     cu(cudaGraphInstantiate(&s.cu_exec, s.cu_graph, 0), "graph instantiate");
