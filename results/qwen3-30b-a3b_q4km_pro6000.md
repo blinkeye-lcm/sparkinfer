@@ -7,31 +7,35 @@
 | Engine | Decode (tg) | VRAM | gap to llama.cpp |
 |---|---:|---:|---:|
 | llama.cpp (CUDA) | **240.5 tok/s** | 17.3 GB | 1.0× |
-| sparkinfer — pass 4 (current) | **~119 tok/s** | 21.7 GB | **2.0×** |
+| sparkinfer — pass 5 (current) | **133 tok/s** | 21.7 GB | **1.8×** |
+| sparkinfer — pass 4 (vec GEMV) | 119 tok/s | 21.7 GB | 2.0× |
 | sparkinfer — pass 3 (CUDA graph) | 118.7 tok/s | 21.7 GB | 2.0× |
 | sparkinfer — pass 2 (decode GEMV) | 84.4 tok/s | 21.7 GB | 2.85× |
 | sparkinfer — pass 1 (fused experts) | 32.7 tok/s | 21.7 GB | 7.3× |
 | sparkinfer — baseline | 0.60 tok/s | 23.3 GB | 400× |
 
-**4 optimization passes: 0.60 → ~119 tok/s (≈200×), gap to llama.cpp 400× → 2.0×.**
+**5 optimization passes: 0.60 → 133 tok/s (≈220×), gap to llama.cpp 400× → 1.8×.**
 
 Passes: (1) fused selected-expert quantized GEMV — dequant only the 8 routed
 experts on-read; (2) decode GEMV for dense projections (coalesced [out,in],
 replacing M=1 tiled GEMM); (3) CUDA-graph the whole decode step (capture once,
-replay per token); (4) 128-bit vectorized GEMV loads.
+replay per token); (4) 128-bit vectorized GEMV loads; (5) flash-decoding
+(KV-split) attention — one block per (seq, q_head, split) + combine, for SM
+occupancy at decode and long-context scaling.
 
-### Profile of the remaining 8.4 ms/token (ablation, no NCU)
+### Profile of the remaining 7.5 ms/token (ablation, no NCU)
 | Component | Cost | Share |
 |---|---:|---:|
-| Attention block (QKV/O GEMV + RoPE + KV-append + gqa) | 3.4 ms | 40% |
-| └ gqa attention kernel alone | 1.2 ms | 14% |
-| MoE (router + fused experts) | ~0 ms | ~0% |
-| LM head + norms + residuals + rest | ~5.0 ms | 60% |
+| Attention block (QKV/O GEMV + RoPE + KV-append + flash-decode) | 2.5 ms | 33% |
+| LM head + argmax | 0.6 ms | 8% |
+| MoE (router + fused experts) | 0.6 ms | 8% |
+| Long tail (rmsnorm/residual/rope/kv-append, ~770 kernels/token) | ~3.8 ms | 51% |
 
-The remaining gap is spread across many small **latency-bound** GEMVs (vectorizing
-the loads gave ~0 — they're not bandwidth-bound at bs=1), not one hot kernel.
-Next levers: flash-decoding attention (KV-split for occupancy + long-context
-scaling), and higher-throughput small-N GEMV (more outputs/warp, split-K).
+At batch-1 every kernel is tiny and **latency-bound** (vectorizing GEMV loads gave
+~0 — not bandwidth-bound). The remaining 1.8× is therefore a **fusion** problem
+(fewer, bigger kernels), not a single hot kernel: fuse QKV into one GEMV, fuse
+residual+RMSNorm, multiple-output-per-warp GEMV. Diminishing returns vs the first
+5 passes — llama.cpp's mul_mat_vec kernels are heavily hand-tuned.
 
 (historical first-pass note below.)
 
