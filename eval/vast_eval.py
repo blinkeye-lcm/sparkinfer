@@ -4,11 +4,14 @@
 Requires VAST_API_KEY (`vastai set api-key <key>`). The numeric label is computed on-box by
 bench/scripts/label.py (deterministic) — this script only orchestrates.
 
-  # reuse an existing box (started if stopped; connects via the direct endpoint):
-  python eval/vast_eval.py --reuse 42134865 --keep --frontier 164 --ceiling 366 --ref main
+  # reuse an existing box (started if stopped, STOPPED again after the eval — the default):
+  python eval/vast_eval.py --reuse 42134865 --frontier 164 --ceiling 366 --ref main
 
-  # provision a fresh RTX 5090, evaluate, then destroy:
-  python eval/vast_eval.py --ref <git-ref> --frontier 164 --ceiling 366
+  # evaluate then DESTROY (frees the disk too), or --keep to leave it running:
+  python eval/vast_eval.py --ref <git-ref> --frontier 164 --ceiling 366 --destroy
+
+By default the instance is STOPPED after every eval: compute billing pauses while the disk and
+cached weights (/workspace/models) persist for a fast next run. --keep leaves it running.
 
 Env: VAST_API_KEY, SSH_KEY (default ~/.ssh/id_ed25519), LLAMACPP_DIR, EVAL_IMAGE, EVAL_REPO.
 """
@@ -51,7 +54,8 @@ def main():
     ap.add_argument("--frontier", type=float, default=0)
     ap.add_argument("--ceiling",  type=float, default=0)
     ap.add_argument("--reuse", type=int, default=0)
-    ap.add_argument("--keep", action="store_true")
+    ap.add_argument("--keep", action="store_true", help="leave the instance running after eval (default: stop it)")
+    ap.add_argument("--destroy", action="store_true", help="destroy after eval instead of stopping (also frees the disk)")
     ap.add_argument("--gpu", default="RTX_5090")
     ap.add_argument("--image", default=IMAGE)
     args = ap.parse_args()
@@ -97,10 +101,17 @@ def main():
         else:
             print("\n!! no RESULT_JSON; stderr tail:\n" + r.stderr[-1500:])
     finally:
-        if created and not args.keep:
-            print(f">> destroying instance {iid}"); v.destroy_instance(id=iid)
+        # Default: STOP after every eval — pauses compute billing, keeps disk + weights for fast reuse.
+        if args.keep:
+            print(f">> leaving instance {iid} running (--keep)")
+        elif args.destroy:
+            print(f">> destroying instance {iid} (disk freed)");
+            try: v.destroy_instance(id=iid)
+            except Exception as e: print("destroy:", str(e)[:150])
         else:
-            print(f">> leaving instance {iid} running ({'--keep' if args.keep else 'reused'})")
+            print(f">> stopping instance {iid} — disk/weights persist; resume with --reuse {iid}")
+            try: v.stop_instance(id=iid)
+            except Exception as e: print("stop:", str(e)[:150])
 
 if __name__ == "__main__":
     main()

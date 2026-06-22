@@ -22,12 +22,16 @@ vastai create ssh-key "$(cat ~/.ssh/id_ed25519.pub)"
 ## Run
 
 ```bash
-# reuse a running box (fast; resolves the CURRENT ssh-url via the API, so a rotated port is fine):
-python eval/vast_eval.py --reuse <instance_id> --keep --frontier 164 --ceiling 366 --ref main
+# reuse a box (started if stopped) — evaluate, then STOP it again (the default):
+python eval/vast_eval.py --reuse <instance_id> --frontier 164 --ceiling 366 --ref main
 
-# provision a fresh RTX 5090, evaluate a branch/commit, then destroy:
-python eval/vast_eval.py --ref <git-ref> --frontier 164 --ceiling 366
+# evaluate then DESTROY (frees the disk), or --keep to leave it running:
+python eval/vast_eval.py --ref <git-ref> --frontier 164 --ceiling 366 --destroy
 ```
+
+**The instance is STOPPED after every eval by default** — compute billing pauses while the disk
+and cached weights (`/workspace/models`) persist, so the next `--reuse` run starts fast.
+`--keep` leaves it running; `--destroy` frees the disk too.
 
 `--frontier` = current best tok/s · `--ceiling` = roofline (or a reference such as llama.cpp's
 tok/s). Reuse mode assumes the weights are cached at `/workspace/models`.
