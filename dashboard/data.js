@@ -105,6 +105,17 @@ window.SPARKINFER = {
   ],
   "prs": [
     {
+      "num": 15,
+      "title": "fix(runtime/qwen35): force n_shared=0 on GGUF loads without shared-expert tensors",
+      "areas": [
+        "runtime"
+      ],
+      "label": "none",
+      "tps": 0.0,
+      "delta_pct": null,
+      "url": "https://github.com/gittensor-ai-lab/sparkinfer/pull/15"
+    },
+    {
       "num": 8,
       "title": "moe: PDL on the decode gate_up->down pair (gated SPARKINFER_PDL) [POC]",
       "areas": [
