@@ -26,6 +26,21 @@ namespace kernels {
 
 static constexpr int WPB = 8;   // warps per block
 
+// Programmatic Dependent Launch (PDL): overlap a kernel's grid spin-up with its
+// predecessor's tail to hide bs=1 decode launch latency (the ncu-confirmed bottleneck).
+// No-op unless the kernel is launched programmatic (cudaLaunchKernelEx +
+// ProgrammaticStreamSerialization) on sm_90+. NVRTC device path stays a no-op.
+__device__ __forceinline__ void si_pdl_lc() {
+#if defined(__CUDA_ARCH__) && (__CUDA_ARCH__ >= 900) && !defined(SPARKINFER_NVRTC_DEVICE_ONLY)
+    cudaTriggerProgrammaticLaunchCompletion();
+#endif
+}
+__device__ __forceinline__ void si_pdl_sync() {
+#if defined(__CUDA_ARCH__) && (__CUDA_ARCH__ >= 900) && !defined(SPARKINFER_NVRTC_DEVICE_ONLY)
+    cudaGridDependencySynchronize();
+#endif
+}
+
 __device__ __forceinline__ float q4kf_h2f(const unsigned char* p) {
     __half h; *((unsigned short*)&h) = *(const unsigned short*)p; return __half2float(h);
 }
@@ -125,6 +140,7 @@ __global__ void gate_up_q4k_mmvq_kernel(
     const unsigned char* __restrict__ up_q, const int* __restrict__ expert_ids,
     float* __restrict__ h_scratch, int H, int F, int top_k
 ) {
+    si_pdl_lc();   // PDL: let the dependent down kernel begin its grid spin-up now
     extern __shared__ char smem_mmvq[];
     float* s_xd = reinterpret_cast<float*>(smem_mmvq);   // [H/32] activation scales
     float* s_xs = s_xd + (H >> 5);                        // [H/32] Q8_1 sum (d*sum)
@@ -244,6 +260,7 @@ __global__ void down_q6k_splitk_kernel(
     const int hh = blockIdx.y * RPB + hh_local;
     const int nblk = F >> 8, dbb = q_block_bytes(down_type);
     float acc = 0.f;
+    si_pdl_sync();   // PDL: wait for gate_up's h_scratch writes before reading them
     if (hh < H) {
         const int total = top_k * nblk;
         for (int wi = split; wi < total; wi += S) {
@@ -302,13 +319,26 @@ void launch_moe_expert_ffn_q4k(
 
     static int splitk = -1;
     if (splitk < 0) { const char* sv = getenv("SPARKINFER_SPLITK"); splitk = (sv && sv[0] == '1') ? 1 : 0; }
+    static int pdl = -1;
+    if (pdl < 0) { const char* pv = getenv("SPARKINFER_PDL"); pdl = (pv && pv[0] == '1') ? 1 : 0; }
     if (splitk) {   // split-K down: 4 warps/row -> 4x warps in flight (occupancy lever)
         const int RPB = WPB / 4;
         dim3 dns(num_tokens, (hidden + RPB - 1) / RPB);
-        down_q6k_splitk_kernel<<<dns, WPB * 32, 0, stream>>>(
-            reinterpret_cast<const unsigned char*>(down_q),
-            expert_ids, expert_weights, h_scratch,
-            reinterpret_cast<__nv_bfloat16*>(output), hidden, ffn, top_k, down_type);
+        if (pdl) {   // PDL: down's grid spin-up overlaps gate_up's tail (programmatic dependent launch)
+            cudaLaunchConfig_t cfg = {};
+            cfg.gridDim = dns; cfg.blockDim = dim3(WPB * 32); cfg.dynamicSmemBytes = 0; cfg.stream = stream;
+            cudaLaunchAttribute attr; attr.id = cudaLaunchAttributeProgrammaticStreamSerialization;
+            attr.val.programmaticStreamSerializationAllowed = 1;
+            cfg.attrs = &attr; cfg.numAttrs = 1;
+            cudaLaunchKernelEx(&cfg, down_q6k_splitk_kernel,
+                reinterpret_cast<const unsigned char*>(down_q), expert_ids, expert_weights, h_scratch,
+                reinterpret_cast<__nv_bfloat16*>(output), hidden, ffn, top_k, down_type);
+        } else {
+            down_q6k_splitk_kernel<<<dns, WPB * 32, 0, stream>>>(
+                reinterpret_cast<const unsigned char*>(down_q),
+                expert_ids, expert_weights, h_scratch,
+                reinterpret_cast<__nv_bfloat16*>(output), hidden, ffn, top_k, down_type);
+        }
     } else {
         dim3 dn(num_tokens, (hidden + WPB - 1) / WPB);
         down_q6k_kernel<<<dn, WPB * 32, 0, stream>>>(
