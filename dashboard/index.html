@@ -6,7 +6,7 @@
 <title>sparkinfer · SN74 — Blackwell inference frontier</title>
 <link rel="icon" type="image/png" href="assets/img/favicon.png">
 <link rel="apple-touch-icon" href="assets/img/favicon.png">
-<meta name="description" content="Live status for sparkinfer on SN74: Blackwell MoE/LLM inference frontier, optimization passes, accuracy, emission weights, and auto-evaluated PRs.">
+<meta name="description" content="Live status for sparkinfer on SN74: Blackwell MoE/LLM inference frontier, optimization passes, accuracy, and auto-evaluated PRs.">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Sora:wght@400;600;700;800&family=Work+Sans:wght@400;500;600&display=swap" rel="stylesheet">
@@ -174,7 +174,7 @@
     <div class="grid2">
       <div class="tcard"><img class="tcard-img tall" src="assets/img/qwen.jpg" alt="Qwen3-MoE" loading="lazy"><h4>Qwen3-MoE<span class="arch" style="color:var(--ok);background:rgba(14,138,22,.14);border-color:rgba(14,138,22,.3)">proven</span></h4>
         <div class="role">model #1 · today's frontier</div>
-        <p>Qwen3-30B-A3B / 35B-A3B — 128–256 experts, top-8, GQA head_dim 128, uniform full attention. Runs end-to-end at the current frontier with <b>100% token-match</b> vs llama.cpp.</p>
+        <p>Qwen3-30B-A3B / 35B-A3B — 128–256 experts, top-8, GQA head_dim 128, uniform full attention. Runs end-to-end at the current frontier with <b><span id="hero-acc">—</span> token-match</b> vs llama.cpp.</p>
         <div class="spec">Q4_K_M · experts kept quantized · verified on RTX 5090 + PRO 6000</div></div>
       <div class="tcard"><img class="tcard-img tall" src="assets/img/gemma-4.jpg" alt="Gemma 4" loading="lazy"><h4>Gemma 4<span class="arch" style="color:var(--warn);background:rgba(184,134,11,.14);border-color:rgba(184,134,11,.35)">wiring</span></h4>
         <div class="role">model #2 · the generality test</div>
@@ -189,16 +189,8 @@
   </section>
 
   <section>
-    <div class="grid2">
-      <div>
-        <div class="sec-h"><h2>vs llama.cpp</h2><span class="hint">same GPU · same GGUF</span></div>
-        <div class="card cmp" id="compare"></div>
-      </div>
-      <div>
-        <div class="sec-h"><h2>Emission weights</h2><span class="hint">path-based · sums to 1.0</span></div>
-        <div class="card" id="weights"></div>
-      </div>
-    </div>
+    <div class="sec-h"><h2>vs llama.cpp</h2><span class="hint">same GPU · same GGUF</span></div>
+    <div class="card cmp" id="compare"></div>
   </section>
 
   <section>
@@ -229,6 +221,7 @@
 
   $("hero-meta").innerHTML = `GPU <b>${s.gpu}</b> &nbsp;·&nbsp; model <b>${s.model}</b>`;
   $("updated").textContent = "updated " + D.updated;
+  $("hero-acc").textContent = (s.token_match*100).toFixed(0)+"%";   // live frontier accuracy, not hardcoded
 
   const gapx = (s.ref_tps/s.frontier_tps).toFixed(1);
   $("kpis").innerHTML = [
@@ -249,11 +242,6 @@
     <div class="bar-row"><div class="nm">sparkinfer</div><div class="track"><div class="fill us" style="width:${(s.frontier_tps/cmax*100).toFixed(1)}%"></div></div><div class="v">${s.frontier_tps}</div></div>
     <div class="bar-row"><div class="nm">${s.ref_name}</div><div class="track"><div class="fill them" style="width:100%"></div></div><div class="v">${s.ref_tps}</div></div>
     <div style="margin-top:14px;text-align:center"><span class="gap">${gapx}×</span> <span style="color:var(--muted);font-size:13px">to close — launch-bound; fusion is the lever</span></div>`;
-
-  $("weights").innerHTML = D.weights.map(w=>`
-    <div class="bar-row"><div class="nm">${w.area}/</div>
-    <div class="track"><div class="fill" style="width:${(w.w*100).toFixed(0)}%;background:${w.color}"></div></div>
-    <div class="v">${w.w.toFixed(2)}</div></div>`).join("");
 
   $("labels").innerHTML = D.labels.map(x=>`<span class="lg"><span class="dot" style="background:${x.c}"></span><b style="color:var(--title)">${x.l}</b> — ${x.d}</span>`).join("");
 

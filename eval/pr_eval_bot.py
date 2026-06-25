@@ -253,6 +253,11 @@ def update_dashboard(repo, pr, areas, res):
     if (res.get("pass") and res.get("label") in FRONTIER_LABELS
             and (res.get("tps") or 0) > data["status"].get("frontier_tps", 0)):
         data["status"]["frontier_tps"] = res["tps"]            # ratchet the live frontier
+        # Accuracy shown on the dashboard is the FRONTIER's accuracy — refresh it from the same
+        # eval that just set the frontier, so token-match/KL never go stale (they used to be a
+        # manual seed the bot never touched).
+        if res.get("top1") is not None: data["status"]["token_match"] = round(res["top1"], 4)
+        if res.get("kl") is not None:   data["status"]["kl"] = round(res["kl"], 4)
     data["updated"] = datetime.date.today().isoformat()
     write_dash(data)
     push_dash(f"dashboard: PR #{num} -> eval:{res.get('label')} ({res.get('tps')} tok/s)")

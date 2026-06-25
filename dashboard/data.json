@@ -7,8 +7,8 @@
     "ref_name": "llama.cpp",
     "ref_tps": 365.73,
     "vram_gb": 21.4,
-    "token_match": 1.0,
-    "kl": 0.136
+    "token_match": 0.98,
+    "kl": 0.1434
   },
   "passes_gpu": "RTX PRO 6000",
   "passes": [
@@ -41,28 +41,6 @@
       "name": "fused norm",
       "what": "residual + RMSNorm",
       "tps": 134
-    }
-  ],
-  "weights": [
-    {
-      "area": "kernels",
-      "w": 0.42,
-      "color": "#006B75"
-    },
-    {
-      "area": "runtime",
-      "w": 0.26,
-      "color": "#0052CC"
-    },
-    {
-      "area": "moe",
-      "w": 0.21,
-      "color": "#8250DF"
-    },
-    {
-      "area": "bench",
-      "w": 0.11,
-      "color": "#5DA271"
     }
   ],
   "labels": [
