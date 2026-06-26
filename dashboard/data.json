@@ -3,7 +3,7 @@
   "status": {
     "gpu": "RTX 5090 · sm_120 · CUDA 13",
     "model": "Qwen3-30B-A3B · Q4_K_M",
-    "frontier_tps": 291.58,
+    "frontier_tps": 303.24,
     "ref_name": "llama.cpp",
     "ref_tps": 365.73,
     "vram_gb": 21.4,
@@ -82,6 +82,18 @@
   ],
   "prs": [
     {
+      "num": 67,
+      "title": "perf(moe): mmvq down split-K occupancy for M-tier decode",
+      "areas": [
+        "kernels",
+        "runtime"
+      ],
+      "label": "S",
+      "tps": 309.34,
+      "delta_pct": 4.0,
+      "url": "https://github.com/gittensor-ai-lab/sparkinfer/pull/67"
+    },
+    {
       "num": 70,
       "title": "int8 mmvq for the last fp32-path GEMVs: attn-V + LM head (Q6_K) + gate/up (Q4_K) (+4.3%)",
       "areas": [
@@ -92,18 +104,6 @@
       "tps": 313.25,
       "delta_pct": 1.2,
       "url": "https://github.com/gittensor-ai-lab/sparkinfer/pull/70"
-    },
-    {
-      "num": 67,
-      "title": "perf(moe): mmvq down split-K occupancy for M-tier decode",
-      "areas": [
-        "kernels",
-        "runtime"
-      ],
-      "label": "M",
-      "tps": 309.45,
-      "delta_pct": 6.1,
-      "url": "https://github.com/gittensor-ai-lab/sparkinfer/pull/67"
     },
     {
       "num": 69,
@@ -504,6 +504,12 @@
       "name": "int8 dp4a MMVQ for the Q6_K ",
       "tps": 291.58,
       "pr": 65,
+      "date": "2026-06-26"
+    },
+    {
+      "name": "mmvq down split-K occupancy ",
+      "tps": 303.24,
+      "pr": 67,
       "date": "2026-06-26"
     }
   ]
