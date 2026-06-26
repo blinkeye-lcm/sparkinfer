@@ -66,6 +66,17 @@ NEEDS_BENCH_LABEL = "needs-benchmark" # box ticked but decode before/after missi
 MERGE_FIRST_LABEL  = "merge-first"    # the round's biggest verified speedup — merge this one first
 NEEDS_REBASE_LABEL = "needs-rebase"   # also a verified speedup, but not the round winner
 REEVALUATE_LABEL   = "re-evaluate"    # winner merged → rebase onto new main; bot re-evals on push
+HOLD_LABEL         = "hold"           # maintainer override: never auto-merge this PR
+
+# Auto-merge the round's merge-first winner — OFF unless SPARKINFER_AUTOMERGE=1. Heavily guarded:
+# the eval only verifies speed + token-match, so auto-merge is gated on labels, author standing,
+# changed paths, and branch protection (gh refuses if checks/reviews aren't satisfied).
+AUTO_MERGE_FIRST = os.environ.get("SPARKINFER_AUTOMERGE", "0") == "1"
+# Auto-merge is BLOCKED if the PR carries any of these labels:
+AUTOMERGE_BLOCK_LABELS = {"copycat", "flagged:gaming", "penalty", "needs-benchmark", "not-tested",
+                          NEEDS_REBASE_LABEL, REEVALUATE_LABEL, HOLD_LABEL}
+# ...or touches any maintainer-owned / governance path (contributor speedups live in kernels|runtime|moe):
+AUTOMERGE_SENSITIVE = ("eval/", "bench/scripts/", ".gittensor/", ".github/", "dashboard/", "CODEOWNERS")
 
 def gh(args):
     return subprocess.run(["gh"] + args, capture_output=True, text=True)
@@ -363,6 +374,47 @@ def update_dashboard(repo, pr, areas, res, base_frontier=0):
     write_dash(data)
     push_dash(f"dashboard: PR #{num} -> eval:{res.get('label')} ({res.get('tps')} tok/s)")
 
+def auto_merge_ok(repo, num):
+    """Guardrails for auto-merging the merge-first winner. Returns (ok, reason)."""
+    info = json.loads(gh(["pr", "view", str(num), "-R", repo, "--json",
+                          "state,isDraft,labels,author,mergeable,files"]).stdout or "{}")
+    if info.get("state") != "OPEN" or info.get("isDraft"):
+        return False, "not an open, non-draft PR"
+    labs = {l["name"] for l in info.get("labels", [])}
+    eval_tiers = {l.split(":", 1)[1] for l in labs if l.startswith("eval:")}
+    if not (eval_tiers & SPEEDUP_LABELS):
+        return False, "no verified eval:speedup label"
+    blocked = labs & AUTOMERGE_BLOCK_LABELS
+    if blocked:
+        return False, f"blocking label(s): {', '.join(sorted(blocked))}"
+    author = (info.get("author") or {}).get("login", "")
+    if author.lower() in load_denylist():
+        return False, f"author {author} is blocked"
+    if author_penalty_until(author):
+        return False, f"author {author} is under penalty"
+    sens = [f["path"] for f in info.get("files", []) if any(f["path"].startswith(p) for p in AUTOMERGE_SENSITIVE)]
+    if sens:
+        return False, f"touches protected paths: {', '.join(sens[:3])}"
+    if info.get("mergeable") != "MERGEABLE":
+        return False, f"not cleanly mergeable ({info.get('mergeable')})"
+    return True, "ok"
+
+def try_auto_merge(repo, num):
+    """Auto-merge the merge-first winner iff all guardrails pass. gh still enforces branch protection
+    (required checks/reviews) and refuses otherwise — a safe backstop. Returns True if merged."""
+    ok, reason = auto_merge_ok(repo, num)
+    if not ok:
+        print(f">> auto-merge SKIP #{num}: {reason}"); return False
+    r = gh(["pr", "merge", str(num), "-R", repo, "--squash"])
+    if r.returncode == 0:
+        print(f">> AUTO-MERGED #{num} (merge-first winner)")
+        gh(["pr", "comment", str(num), "-R", repo, "--body",
+            "<!-- sparkinfer-automerge -->\n✅ Auto-merged as the round's `merge-first` winner — "
+            "verified same-box speedup over `main`, all checks green. Thanks for the contribution!"])
+        return True
+    print(f">> auto-merge BLOCKED #{num} (branch protection/checks): {(r.stderr or r.stdout).strip()[:200]}")
+    return False
+
 def reconcile_merge_labels(repo):
     """Per-round merge workflow. After all queued PRs are graded against the same-box main:
       1. If a `merge-first` PR has since MERGED, its rivals are stale → tag them `re-evaluate` and
@@ -400,6 +452,15 @@ def reconcile_merge_labels(repo):
         add_label(repo, num, NEEDS_REBASE_LABEL)
         remove_label(repo, num, MERGE_FIRST_LABEL)
     print(f">> round labels: merge-first #{winner}; needs-rebase {[n for n,_ in scored[1:]] or 'none'}")
+
+    # Optionally auto-merge the winner (guarded), then flag the rivals to rebase + re-eval vs new main.
+    if AUTO_MERGE_FIRST and try_auto_merge(repo, winner):
+        for num, _ in scored[1:]:
+            add_label(repo, num, REEVALUATE_LABEL)
+            gh(["pr", "comment", str(num), "-R", repo, "--body",
+                "<!-- sparkinfer-reeval -->\nThe round's `merge-first` PR was just merged. Please "
+                "**rebase this branch onto `main`** — the bot re-evaluates it against the new frontier "
+                "(crediting your *marginal* gain on top of what merged)."])
 
 def main():
     ap = argparse.ArgumentParser()

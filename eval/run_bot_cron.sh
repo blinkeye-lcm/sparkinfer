@@ -7,6 +7,7 @@
 # Override params via env (or edit the defaults):  VAST_INSTANCE, FRONTIER, CEILING, REPO.
 export HOME="${HOME:-/home/speedy}"
 export PATH="/usr/local/bin:/usr/bin:/bin:$HOME/.local/bin:$PATH"
+export SPARKINFER_AUTOMERGE=1   # auto-merge the round's merge-first winner (guarded). Set 0 to disable.
 
 # Single-run lock: a full run can exceed the 30-min cron interval (model download, multi-PR queue).
 # Without this, the next tick starts a SECOND bot on top of the first — overlapping runs that each
