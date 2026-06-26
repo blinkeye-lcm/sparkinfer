@@ -80,6 +80,7 @@ struct Qwen35Model::Impl {
     bool use_pq = true;   // SPARKINFER_PQ=0 disables the pre-quantized GEMV path
     void* aq81 = nullptr; // block_q8_1 activation for the faithful llama mmvq port
     bool use_llama = true; // default ON: faithful llama mmvq for Q4_K attn GEMVs (+9.7%, top1 0.99). =0 disables
+    bool use_q6mmvq = true;  // default ON: int8 Q6_K mmvq for attn-V upgrades + LM head. =0 disables
 
     template <class T> T* alloc(size_t n) { void* p=nullptr; cu(cudaMalloc(&p, n*sizeof(T)), "malloc"); return (T*)p; }
 };
@@ -132,6 +133,7 @@ Qwen35Model::Qwen35Model(const Qwen35Config& cfg, KVCacheManager* kv, moe::MoEEn
     p_->aq81  = p_->alloc<char>(kernels::llama_q8_1_bytes(kmax));
     if (const char* e = getenv("SPARKINFER_PQ"))    p_->use_pq    = !(e[0] == '0');
     if (const char* e = getenv("SPARKINFER_LLAMA")) p_->use_llama = !(e[0] == '0');
+    if (const char* e = getenv("SPARKINFER_Q6MMVQ")) p_->use_q6mmvq = !(e[0] == '0');
 }
 
 Qwen35Model::~Qwen35Model() {
@@ -197,16 +199,20 @@ int Qwen35Model::forward_token(int token_id, int position) {
         if (s.gguf) {   // GGUF dense weights are native [out,in] -> coalesced GEMV
             // Q/K/V all read xn: quantize it to Q8_1 ONCE, then dp4a each Q4_K proj against it
             // (no per-block, per-GEMV re-quant). Q6_K/bf16 weights keep their existing path.
-            const bool qkv_q4k = s.use_pq && (w.wq_type == 12 || w.wk_type == 12 || w.wv_type == 12);
-            if (qkv_q4k) {
-                if (s.use_llama) kernels::launch_quantize_q8_1_blocks(s.xn, s.aq81, H, st);
-                else             kernels::launch_quantize_q8_1(s.xn, s.aq8, s.aq8_d, s.aq8_s, H, st);
-            }
+            const bool any_q4k = (w.wq_type == 12 || w.wk_type == 12 || w.wv_type == 12);
+            const bool any_q6k = (w.wq_type == 14 || w.wk_type == 14 || w.wv_type == 14);
+            if (s.use_pq && s.use_llama && (any_q4k || any_q6k))
+                kernels::launch_quantize_q8_1_blocks(s.xn, s.aq81, H, st);   // shared Q8_1(xn) for Q4_K + Q6_K mmvq
+            else if (s.use_pq && any_q4k)
+                kernels::launch_quantize_q8_1(s.xn, s.aq8, s.aq8_d, s.aq8_s, H, st);
             auto proj = [&](const void* W, int t, void* y, int N) {
                 if (s.use_pq && t == 12) {
                     if (s.use_llama) kernels::launch_mmvq_q4k(s.aq81, W, y, N, H, st);
                     else             kernels::launch_gemv_q_dp4a_pq(s.aq8, s.aq8_d, s.aq8_s, W, y, N, H, st);
                 }
+                else if (s.use_q6mmvq && t == 14)
+                    kernels::launch_mmvq_q6k(s.aq81, W, y, N, H, st);        // Q6_K mmvq (attn-V upgrades); reuses aq81
+
                 else if (t) kernels::launch_gemv_q(s.xn, W, t, y, N, H, st);
                 else        kernels::launch_gemv(s.xn, W, y, N, H, st);
             };
@@ -270,7 +276,11 @@ int Qwen35Model::forward_token(int token_id, int position) {
         kernels::launch_add_rmsnorm2(s.h, s.routed, nextnorm, s.x, s.xn, 1, H, c.rms_eps, st);
     }
     // xn now holds RMSNorm(x_final, final_norm)
-    if (s.gguf && s.w.lm_head_type) kernels::launch_gemv_q_f32(s.xn, s.w.lm_head, s.w.lm_head_type, s.logits, c.vocab, H, st);
+    if (s.gguf && s.use_q6mmvq && s.w.lm_head_type == 14) {   // int8 Q6_K dp4a LM head (1 warp/row)
+        kernels::launch_quantize_q8_1_blocks(s.xn, s.aq81, H, st);
+        kernels::launch_gemv_q6k_dp4a_f32(s.aq81, s.w.lm_head, s.logits, c.vocab, H, st);
+    }
+    else if (s.gguf && s.w.lm_head_type) kernels::launch_gemv_q_f32(s.xn, s.w.lm_head, s.w.lm_head_type, s.logits, c.vocab, H, st);
     else if (s.gguf)                kernels::launch_gemv_f32(s.xn, s.w.lm_head, s.logits, c.vocab, H, st);  // lm_head native [vocab,H]
     else        kernels::launch_linear_f32(s.xn, s.w.lm_head, s.logits, 1, c.vocab, H, st);
     kernels::launch_argmax(s.logits, s.d_out_id, 1, c.vocab, st);
