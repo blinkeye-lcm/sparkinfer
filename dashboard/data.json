@@ -82,6 +82,17 @@
   ],
   "prs": [
     {
+      "num": 69,
+      "title": "Split-K the int8 dp4a MoE down GEMV (+3.4% decode)",
+      "areas": [
+        "kernels"
+      ],
+      "label": "none",
+      "tps": 293.62,
+      "delta_pct": 0.7,
+      "url": "https://github.com/gittensor-ai-lab/sparkinfer/pull/69"
+    },
+    {
       "num": 65,
       "title": "perf(moe): int8 dp4a MMVQ for the Q6_K MoE down (+4% decode)",
       "areas": [
