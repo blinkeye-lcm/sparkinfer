@@ -62,6 +62,10 @@ AREAS = {"kernels", "runtime", "moe", "bench"}
 EVAL_GATE_LABEL  = "test-on-5090"     # bot-set marker: greenlit, will be evaluated
 NOT_TESTED_LABEL = "not-tested"       # box not ticked
 NEEDS_BENCH_LABEL = "needs-benchmark" # box ticked but decode before/after missing/invalid/no-gain
+# Per-round merge workflow (all queued PRs graded vs the same-box main in one round):
+MERGE_FIRST_LABEL  = "merge-first"    # the round's biggest verified speedup — merge this one first
+NEEDS_REBASE_LABEL = "needs-rebase"   # also a verified speedup, but not the round winner
+REEVALUATE_LABEL   = "re-evaluate"    # winner merged → rebase onto new main; bot re-evals on push
 
 def gh(args):
     return subprocess.run(["gh"] + args, capture_output=True, text=True)
@@ -301,6 +305,7 @@ def render(res, oid):
 DASH = os.path.join(ROOT, "dashboard")
 DATA_JSON = os.path.join(DASH, "data.json")
 FRONTIER_LABELS = {"XL", "L", "M", "S", "XS", "BASELINE"}
+SPEEDUP_LABELS = {"XL", "L", "M", "S", "XS"}   # verified speedup over main (BASELINE excluded)
 
 def load_dash():
     try:
@@ -357,6 +362,44 @@ def update_dashboard(repo, pr, areas, res, base_frontier=0):
     data["updated"] = datetime.date.today().isoformat()
     write_dash(data)
     push_dash(f"dashboard: PR #{num} -> eval:{res.get('label')} ({res.get('tps')} tok/s)")
+
+def reconcile_merge_labels(repo):
+    """Per-round merge workflow. After all queued PRs are graded against the same-box main:
+      1. If a `merge-first` PR has since MERGED, its rivals are stale → tag them `re-evaluate` and
+         ask them to rebase onto the new main (the bot re-evals automatically on the rebased commit).
+      2. Among the still-open PRs with a verified speedup, label the biggest `merge-first` and the
+         rest `needs-rebase`. Ranking uses the same-box % gain over main (data.json `delta_pct`)."""
+    data = load_dash() or {}
+    by_num = {p["num"]: p for p in data.get("prs", [])}
+    open_prs = json.loads(gh(["pr", "list", "-R", repo, "--state", "open",
+                              "--json", "number,labels", "--limit", "80"]).stdout or "[]")
+    open_labels = {p["number"]: {l["name"] for l in p["labels"]} for p in open_prs}
+
+    # 1) A merge-first PR that merged → its rivals must rebase + re-eval against the new main.
+    merged_first = json.loads(gh(["pr", "list", "-R", repo, "--state", "merged", "--label",
+                                  MERGE_FIRST_LABEL, "--json", "number", "--limit", "10"]).stdout or "[]")
+    if merged_first:
+        for m in merged_first: remove_label(repo, m["number"], MERGE_FIRST_LABEL)
+        for num, labs in open_labels.items():
+            if NEEDS_REBASE_LABEL in labs and REEVALUATE_LABEL not in labs:
+                add_label(repo, num, REEVALUATE_LABEL)
+                gh(["pr", "comment", str(num), "-R", repo, "--body",
+                    "<!-- sparkinfer-reeval -->\nThe round's `merge-first` PR was just merged. Please "
+                    "**rebase this branch onto `main`** — the bot will re-evaluate it against the new "
+                    "frontier (so you're credited for the *marginal* gain on top of what merged)."])
+
+    # 2) Rank open verified-speedup PRs; biggest → merge-first, rest → needs-rebase.
+    scored = sorted(((num, by_num[num].get("delta_pct") or 0) for num in open_labels
+                     if num in by_num and by_num[num].get("label") in SPEEDUP_LABELS),
+                    key=lambda x: x[1], reverse=True)
+    if not scored: return
+    winner = scored[0][0]
+    add_label(repo, winner, MERGE_FIRST_LABEL)
+    for L in (NEEDS_REBASE_LABEL, REEVALUATE_LABEL): remove_label(repo, winner, L)
+    for num, _ in scored[1:]:
+        add_label(repo, num, NEEDS_REBASE_LABEL)
+        remove_label(repo, num, MERGE_FIRST_LABEL)
+    print(f">> round labels: merge-first #{winner}; needs-rebase {[n for n,_ in scored[1:]] or 'none'}")
 
 def main():
     ap = argparse.ArgumentParser()
@@ -584,6 +627,11 @@ def main():
         if res: update_dashboard(args.repo, pr, areas, res, run_start_frontier)
         # NB: run_baseline is NOT ratcheted here — every PR is graded against merged origin/main, so
         # independent optimizations each get their true gain (the frontier advances on MERGE, not eval).
+
+    # Per-round merge workflow: among the PRs graded this round, label the biggest verified speedup
+    # `merge-first` and the rest `needs-rebase`; if a prior winner merged, flag its rivals `re-evaluate`.
+    if not args.dry_run:
+        reconcile_merge_labels(args.repo)
 
     # Stop (not destroy) the instance after all PRs — disk/model cache persists for next run.
     final_iid = current_instance(args.instance)
