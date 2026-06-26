@@ -82,7 +82,7 @@ llama.cpp), benchmarks **decode speed**, and posts a comment with an **`eval:<la
 
 | label | meaning |
 |---|---|
-| `XL · L · M · S · XS` | verified speedup over the live frontier (by fraction of headroom closed) |
+| `XL · L · M · S · XS` | verified speedup over the live frontier, by **% gain** (`XS` 2–3.5% … `XL` >18%) |
 | `none` | correct, but no verified improvement (within the significance gate) |
 | `REJECT` | failed the correctness gate — the output changed |
 | `BASELINE` | first verified entry; establishes the frontier |

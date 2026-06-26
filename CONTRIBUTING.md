@@ -45,8 +45,10 @@ current best ("frontier"), not your rank — so "copy the leader + ε" pays ≈ 
 labels each PR **XL / L / M / S / XS** from the measured delta (or **BASELINE** for the first
 verified entry on a new model/target) — never by hand — and that tier is the payout. A speedup
 is scored the same wherever it lands (`kernels/`, `runtime/`, `moe/`); there is **no
-per-subsystem budget**. Tiers are maturity-adaptive (they rebalance toward smaller gains as the
-runtime nears the hardware ceiling). See the [org reward model](https://github.com/gittensor-ai-lab).
+per-subsystem budget**. Tiers are bands of **% speedup over the frontier** — `XS` 2–3.5%, `S`
+3.5–6%, `M` 6–10%, `L` 10–18%, `XL` >18% (a gain under 2% is within measurement noise → `none`).
+Because they scale with the frontier, every tier stays reachable as decode speed grows. See the
+[org reward model](https://github.com/gittensor-ai-lab).
 
 **Non-speedup PRs are welcome — but score 0.** Bug fixes, refactors, tests, benchmarks, docs,
 and tooling are appreciated and we'll review and merge good ones, but SN74 emits only for

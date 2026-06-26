@@ -47,32 +47,32 @@ window.SPARKINFER = {
   "labels": [
     {
       "l": "XL",
-      "d": "> 25% of remaining headroom",
+      "d": "> 18% over frontier",
       "c": "#0E8A16"
     },
     {
       "l": "L",
-      "d": "10–25%",
+      "d": "10–18% over frontier",
       "c": "#1D76DB"
     },
     {
       "l": "M",
-      "d": "3–10%",
+      "d": "6–10% over frontier",
       "c": "#8250DF"
     },
     {
       "l": "S",
-      "d": "1–3%",
+      "d": "3.5–6% over frontier",
       "c": "#B8860B"
     },
     {
       "l": "XS",
-      "d": "< 1%",
+      "d": "2–3.5% over frontier",
       "c": "#8A93A0"
     },
     {
       "l": "none",
-      "d": "within noise — no verified gain",
+      "d": "≤ 2% — within noise, no verified gain",
       "c": "#9AA6B2"
     },
     {

@@ -45,6 +45,13 @@ The llama.cpp gap closed to **0.78×** (285.32 vs 365.73 tok/s).
   a `flock` lock prevents overlapping cron ticks. Together these make the 30-minute auto-eval reliable.
 - **Dashboard.** Optimization-journey x-axis labels rotated 45° so the (now 12) bars no longer collide.
 
+### Changed
+- **Label tiers are now bands of % speedup over the frontier** (`XS` 2–3.5%, `S` 3.5–6%, `M` 6–10%,
+  `L` 10–18%, `XL` >18%; <2% is within noise → `none`) — same denominator as the significance gate.
+  The previous *fraction-of-headroom* rule collapsed `XS`/`S` once the frontier neared the ceiling
+  (the 2% noise floor alone exceeded their headroom bands); the new bands keep all five tiers
+  reachable and scale with decode speed.
+
 ### Verified
 - **RTX 5090** frontier **285.32 tok/s**, top-1 0.96 vs llama.cpp (KL ≈ 0.14 nats), 21.4 GB resident.
 
