@@ -4,12 +4,12 @@ window.SPARKINFER = {
   "status": {
     "gpu": "RTX 5090 · sm_120 · CUDA 13",
     "model": "Qwen3-30B-A3B · Q4_K_M",
-    "frontier_tps": 388.68,
+    "frontier_tps": 394.45,
     "ref_name": "llama.cpp",
     "ref_tps": 372,
     "vram_gb": 21.4,
-    "token_match": 0.98,
-    "kl": 0.1453,
+    "token_match": 0.97,
+    "kl": 0.1417,
     "ref_note": "128-tok decode, same RTX 5090"
   },
   "passes_gpu": "RTX PRO 6000",
@@ -630,6 +630,12 @@ window.SPARKINFER = {
       "name": "skip the unused per-expert t",
       "tps": 388.68,
       "pr": 73,
+      "date": "2026-06-28"
+    },
+    {
+      "name": "split-K the router projectio",
+      "tps": 394.45,
+      "pr": 72,
       "date": "2026-06-28"
     }
   ]
