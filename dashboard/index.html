@@ -223,10 +223,12 @@
   $("updated").textContent = "updated " + D.updated;
   $("hero-acc").textContent = (s.token_match*100).toFixed(0)+"%";   // live frontier accuracy, not hardcoded
 
-  const gapx = (s.ref_tps/s.frontier_tps).toFixed(1);
+  const ahead = s.frontier_tps >= s.ref_tps;
+  const pct   = 100*(s.frontier_tps - s.ref_tps)/s.ref_tps;   // +ve when sparkinfer leads
+  const gapx  = (s.ref_tps/s.frontier_tps).toFixed(2);
   $("kpis").innerHTML = [
-    {lab:"Frontier decode", val:s.frontier_tps, unit:"tok/s", note:"single-stream, bs=1"},
-    {lab:"Gap to "+s.ref_name, val:gapx+"×", unit:"", note:`${s.ref_name} ${s.ref_tps} tok/s`},
+    {lab:"Frontier decode", val:s.frontier_tps, unit:"tok/s", note:"single-stream, bs=1 · 128-tok"},
+    {lab:(ahead?"vs ":"Gap to ")+s.ref_name, val:(ahead?"+"+pct.toFixed(1)+"%":gapx+"×"), unit:"", note:`${s.ref_name} ${s.ref_tps} tok/s · 128-tok`},
     {lab:"Accuracy", val:(s.token_match*100).toFixed(0)+"%", unit:"top-1", note:`KL ${s.kl} vs ${s.ref_name}`},
     {lab:"VRAM resident", val:s.vram_gb, unit:"GB", note:"experts kept quantized"},
   ].map(k=>`<div class="kpi"><div class="lab">${k.lab}</div><div class="val">${k.val} <span>${k.unit}</span></div><div class="note">${k.note}</div></div>`).join("");
@@ -266,8 +268,10 @@
   const cmax = Math.max(s.frontier_tps, s.ref_tps);
   $("compare").innerHTML = `
     <div class="bar-row"><div class="nm">sparkinfer</div><div class="track"><div class="fill us" style="width:${(s.frontier_tps/cmax*100).toFixed(1)}%"></div></div><div class="v">${s.frontier_tps}</div></div>
-    <div class="bar-row"><div class="nm">${s.ref_name}</div><div class="track"><div class="fill them" style="width:100%"></div></div><div class="v">${s.ref_tps}</div></div>
-    <div style="margin-top:14px;text-align:center"><span class="gap">${gapx}×</span> <span style="color:var(--muted);font-size:13px">to close — launch-bound; fusion is the lever</span></div>`;
+    <div class="bar-row"><div class="nm">${s.ref_name}</div><div class="track"><div class="fill them" style="width:${(s.ref_tps/cmax*100).toFixed(1)}%"></div></div><div class="v">${s.ref_tps}</div></div>
+    <div style="margin-top:14px;text-align:center">${ahead
+      ? `<span class="gap">+${pct.toFixed(1)}%</span> <span style="color:var(--muted);font-size:13px">faster than ${s.ref_name} at 128-tok decode · ~parity at long context</span>`
+      : `<span class="gap">${gapx}×</span> <span style="color:var(--muted);font-size:13px">to close — launch-bound; fusion is the lever</span>`}</div>`;
 
   $("labels").innerHTML = D.labels.map(x=>`<span class="lg"><span class="dot" style="background:${x.c}"></span><b style="color:var(--title)">${x.l}</b> — ${x.d}</span>`).join("");
 

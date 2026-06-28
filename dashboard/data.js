@@ -6,10 +6,11 @@ window.SPARKINFER = {
     "model": "Qwen3-30B-A3B · Q4_K_M",
     "frontier_tps": 388.68,
     "ref_name": "llama.cpp",
-    "ref_tps": 365.73,
+    "ref_tps": 372,
     "vram_gb": 21.4,
     "token_match": 0.98,
-    "kl": 0.1453
+    "kl": 0.1453,
+    "ref_note": "128-tok decode, same RTX 5090"
   },
   "passes_gpu": "RTX PRO 6000",
   "passes": [
