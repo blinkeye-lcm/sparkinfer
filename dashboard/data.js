@@ -4,7 +4,7 @@ window.SPARKINFER = {
   "status": {
     "gpu": "RTX 5090 · sm_120 · CUDA 13",
     "model": "Qwen3-30B-A3B · Q4_K_M",
-    "frontier_tps": 394.45,
+    "frontier_tps": 410.85,
     "ref_name": "llama.cpp",
     "ref_tps": 372,
     "vram_gb": 21.4,
@@ -670,6 +670,12 @@ window.SPARKINFER = {
       "tps": 394.45,
       "pr": 72,
       "date": "2026-06-28"
+    },
+    {
+      "name": "emit Q8_1 from the residual ",
+      "tps": 410.85,
+      "pr": 83,
+      "date": "2026-06-29"
     }
   ]
 };
