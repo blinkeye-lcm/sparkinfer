@@ -84,6 +84,21 @@ window.SPARKINFER = {
   ],
   "prs": [
     {
+      "num": 86,
+      "title": "perf(decode): single-pass MoE top-k + fused RoPE/KV-append (+3.2% decode)",
+      "areas": [
+        "kernels",
+        "runtime"
+      ],
+      "label": "S",
+      "tps": 408.23,
+      "delta_pct": 3.6,
+      "top1": 0.97,
+      "kl": 0.1417,
+      "url": "https://github.com/gittensor-ai-lab/sparkinfer/pull/86",
+      "proof_url": "https://gittensor-ai-lab.github.io/sparkinfer-log/?run=0086-1fafcc2"
+    },
+    {
       "num": 83,
       "title": "perf(decode): emit Q8_1 from the residual RMSNorm to drop the per-layer activation quantize (+2.7% decode)",
       "areas": [
