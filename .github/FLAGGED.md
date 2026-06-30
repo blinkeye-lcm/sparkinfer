@@ -62,6 +62,25 @@ supersedes the auto-block records above.
 
 Auto-blocked: copycat of #83 (fansilas) re-submitted as PR #88. Zero-tolerance copycat policy.
 
-## 2026-06-30 — `carlh7777` (auto-blocked)
+## 2026-06-30 — `carlh7777` + `thomasbaker9010251` (sybil pair)
 
-Flagged for eval-gaming / coordinated farming. PR #112 (`fuse down-projection Q8_1 quantize into gate/up`, self-reported -4.7%) duplicates the approach of #105 by a DIFFERENT account (andriypolanski, `emit Q8_1 from gate/up ... drop the MoE-down quantize node`) with an identical -4.7% measured result — a copycat / sybil-coordination signal. History: 3 PRs, none merged (#49 + #99 closed not-tested; #112 a known regression submitted as a perf PR). Blocked per the no-gaming policy; future PRs auto-close.
+**Accounts:** `carlh7777` (PR opener), `thomasbaker9010251` (commit author/committer).
+
+**Evidence — shared git identity across two accounts (concrete):**
+PR **#112** (`perf(moe): fuse down-projection Q8_1 quantize into gate/up`) was *opened* by
+`carlh7777`, but every commit on it is *authored AND committed* by `thomasbaker9010251`
+(`Thomas B <thomas.b.901025@gmail.com>`). Opener ≠ committer, both non-collaborators (only
+`ai-hpc` has push) — one operator pushing from a single git environment under two GitHub
+identities. `thomasbaker9010251` opens no PRs of its own; it appears only as the commit author
+behind `carlh7777`'s submissions. Same signal class as the glorysr1209-png/seekmistar01 pair above.
+
+**History:** `carlh7777` — 3 PRs, none merged (#49, #99 closed `not-tested`; #112 a known
+self-reported **−4.7%** regression submitted as a "perf" PR).
+
+**Action:** both accounts added to `blocked-contributors.txt`; future PRs from either auto-flag,
+close, and skip evaluation.
+
+**NB:** an earlier draft of this entry wrongly cited `andriypolanski`/#105 as the twin because #112
+and #105 shared an identical −4.7% result. That was coincidence — `andriypolanski`'s commits are
+self-consistent (own login + email), so andriypolanski is **not** part of this sybil and is **not**
+blocked. The real link is the carlh7777 ↔ thomasbaker9010251 opener/committer split above.
