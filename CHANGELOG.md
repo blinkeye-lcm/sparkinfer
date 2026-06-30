@@ -3,6 +3,56 @@
 Notable changes to sparkinfer. Format loosely follows [Keep a Changelog](https://keepachangelog.com);
 versions track the GitHub [releases](https://github.com/gittensor-ai-lab/sparkinfer/releases).
 
+## [0.3.2] — 2026-06-30
+
+The lead over llama.cpp **doubles to ~24%**, and the evaluation that proves it is **substantially
+hardened** — held-out prompts, reference quarantine, clock-recorded runs, an immutable frontier
+ledger, and a corrected KL metric.
+
+### Performance — RTX 5090 frontier 410.85 → 453.70 tok/s (+10.4%); now **24% past llama.cpp**
+Two verified kernel optimizations merged (top-1 0.97):
+- **#89** — run the Q/K/V projections on **concurrent CUDA streams**, overlapping latency-bound bs=1 GEMVs → 435.41, byte-identical (@James-CUDA)
+- **#86** — **single-pass MoE top-k** (one parallel rank-count vs 8 serial arg-max passes) + fused RoPE/KV-append → 453.70 (@fansilas)
+
+Same RTX 5090, same Q4_K_M GGUF, warm & interleaved vs `llama-bench`:
+
+| decode length | sparkinfer | llama.cpp |   | vs v0.3.1 |
+|---|---|---|---|---|
+| **128 tok** | **453.70** | 365.85 | **+24.0%** | was +12.1% |
+| **256 tok** | **443.53** | 364.90 | **+21.6%** | was +10.0% |
+| **512 tok** | **425.23** | 361.64 | **+17.6%** | was +6.7% |
+
+The lead grew at **every** length — the recent decode-path work cut the per-token overhead that used
+to shrink the long-context lead.
+
+### Added — trust-hardened evaluation pipeline (#102)
+Closes the remaining gaming/poisoning vectors from the eval trust-model audit:
+- **Held-out prompts (H1)** — each eval scores a fresh, unpredictable per-seed window of a diverse
+  corpus, so a submission can't overfit a fixed prompt; the seed is logged for reproduction.
+- **Reference quarantine (C2)** — the baseline weights (sha256-pinned) and llama.cpp (commit-pinned)
+  are verified/rebuilt each run, so a tampered persisted copy can't skew a verdict.
+- **Clock record (M1)** — the graphics clock each number was produced at is pinned where the box
+  permits and **always recorded**, so the absolute tok/s is reproducible.
+- **Immutable frontier ledger (H2)** — every frontier advance appends a GitHub-timestamped line
+  `(date, PR, author, commit, Δ%, prev→new)` to the public eval-log; auditable line-by-line.
+- **Provenance** (clock, seed, reference pins) is written into every verdict and immutable log.
+
+### Fixed — the KL accuracy metric (honest, strict gate kept)
+The held-out KL looked high (0.27 on hard text) — investigation found a **measurement artifact**: the
+gate dumped only sparkinfer's top-20 and floored llama's tail, over-penalizing KL on flat
+distributions. The fix dumps a deeper top-k so llama's mass is covered; the **true divergence is ~0.02**
+(top-1 0.97). Proven honest — a sensitivity test reads KL 18 on a deliberately broken build, and a
+12-prompt sweep holds KL 0.007–0.022. So the **strict `KL ≤ 0.20` gate is kept**: it holds on held-out
+text because the measurement is correct, not because it was loosened.
+
+### Verified
+- **RTX 5090** frontier **453.70 tok/s** (128-tok), top-1 **0.97** vs llama.cpp — **+24.0% @128 /
+  +21.6% @256 / +17.6% @512** over a fully-built CUDA llama.cpp, same-box, warm, interleaved.
+
+### Contributors
+- **@James-CUDA** — #89 (concurrent Q/K/V CUDA streams)
+- **@fansilas** — #86 (single-pass MoE top-k + fused RoPE/KV-append)
+
 ## [0.3.1] — 2026-06-29
 
 The lead over llama.cpp widens to **double digits — and now holds at every context length** — and the
