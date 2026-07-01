@@ -3,9 +3,14 @@
 Notable changes to sparkinfer. Format loosely follows [Keep a Changelog](https://keepachangelog.com);
 versions track the GitHub [releases](https://github.com/gittensor-ai-lab/sparkinfer/releases).
 
-## [Unreleased]
+## [0.3.3] — 2026-07-01
 
-### Changed — difficulty-compensated scoring (perpetual-progress incentive)
+Two things this release: scoring that **rewards late-game effort** (so it stays worth optimizing as the
+frontier matures), and a **long-context proof of concept** that finds — and largely fixes — the biggest
+open opportunity, to point contributors at where the real headroom is. The 128-tok frontier is
+unchanged at **453.70 tok/s**.
+
+### Changed — difficulty-compensated scoring (#113): reward late-game effort
 As the frontier pulls past llama.cpp, each further % gain gets much harder (near the roofline the
 easy headroom is gone), so a fixed %-band scale under-rewards late-game work — a hard +4% now took
 more than an easy +20% at cold start. `label.py` now scales the **label tier** by a difficulty
@@ -16,6 +21,34 @@ stays on the **raw** delta (noise is never boosted), and the cold-start era (fro
 untouched (D=1, no retroactive inflation). Applied from new evals onward. On the real history #83/#89/#86
 move S→M/L; everything below llama is unchanged. Governance-tunable (`SPARKINFER_DIFFICULTY_{BOOST,K,REF,MAX}`);
 replay with [`eval/sim_difficulty.py`](eval/sim_difficulty.py).
+
+### Added — long-context decode: the deficit found, and a first fix (#115) — proof of concept for miners
+Our headline "+24% past llama.cpp" is measured at 128-tok; at real KV **depth** the story reverses.
+A same-box depth sweep (sparkinfer vs `llama-bench -d`) found sparkinfer's decode **collapses** with
+context — **5.2× behind llama at 32k** (37 vs 193 tok/s), running ~6× *below* the memory roofline. Root
+cause: the flash-decode split count was **fixed** (`n_splits=32`), so at 32k each split streamed a
+~1024-long serial online-softmax chunk on ≤1024 blocks (latency-bound, SMs idle).
+
+**#115 makes `n_splits` depth-adaptive** (scale with `seq_len`, target ~256 KV/split, powers of two from
+32, capped 256) so the grid fills the SMs at depth; the decode CUDA graph is re-captured only ~log₂
+times per generation. **Correctness-preserving by construction** — the online-softmax combine is an
+*exact* reduction, bit-identical for any split count (top-1/KL unchanged). Short context is untouched
+(adaptive holds 32 below ~8k), so the frontier is unaffected. Tune via `SPARKINFER_SPLIT_CHUNK`; pin a
+fixed value via `SPARKINFER_NSPLITS`.
+
+**Long-context speedup — RTX 5090, decode tok/s at KV depth:**
+
+| KV depth | before (fixed 32) | after (adaptive) | speedup | gap to llama.cpp |
+|---|---|---|---|---|
+| 128 | 442.8 | 442.7 | 1.00× | unchanged (no short-context regression) |
+| 4,096 | 194.0 | 193.8 | 1.00× | unchanged |
+| **16,384** | 70.8 | **166.2** | **2.35×** | 3.4× → **1.44×** behind |
+| **32,768** | 38.5 | **110.7** | **2.88×** | 5.0× → **1.74×** behind |
+
+This is a **proof of concept, not the finish line** — it's here to guide contributors: long-context
+flash-decode (KV-split scaling, paged-KV read efficiency, KV quantization) is where the headroom is, and
+one config fix already closed most of a 5× gap. The 128-tok eval doesn't measure it yet — a long-context
+eval dimension is the natural next step.
 
 ## [0.3.2] — 2026-06-30
 
