@@ -10,10 +10,10 @@
     "token_match": 0.9612,
     "kl": 0.0175,
     "ref_note": "128-tok decode, same RTX 5090 final main benchmark · seed 99162999bbd8efa5",
-    "longctx_16k_tps": 249.7,
-    "longctx_2k_tps": 279.28,
-    "longctx_token_match": 0.9643,
-    "longctx_kl": 0.0147
+    "longctx_16k_tps": 262.93,
+    "longctx_2k_tps": 277.78,
+    "longctx_token_match": 0.9735,
+    "longctx_kl": 0.0075
   },
   "context_baselines": [
     {
@@ -940,6 +940,13 @@
       "name": "bf16 GQA tile12 + adaptive c",
       "tps": 249.7,
       "pr": 126,
+      "ctx": 16384,
+      "date": "2026-07-02"
+    },
+    {
+      "name": "uint4 ldg KV staging + GQA T",
+      "tps": 262.93,
+      "pr": 130,
       "ctx": 16384,
       "date": "2026-07-02"
     }
