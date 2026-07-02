@@ -17,6 +17,15 @@
   },
   "context_baselines": [
     {
+      "ctx": 128,
+      "label": "128",
+      "color": "#D14D72",
+      "tokens": 128,
+      "sparkinfer_tps": 481.24,
+      "llamacpp_decode_tps": 365.85,
+      "llamacpp_note": "128-token decode, no prefill context"
+    },
+    {
       "ctx": 512,
       "label": "512",
       "color": "#7B5DFF",
