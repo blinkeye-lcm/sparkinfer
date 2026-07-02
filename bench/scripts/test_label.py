@@ -73,20 +73,20 @@ class LabelPolicyTest(unittest.TestCase):
         prov = {
             "eval_mode": "longctx",
             "score_context": 16384,
-            "ctx_2048_tps": 300.0,
+            "ctx_128_tps": 480.0,
             "ctx_16384_tps": 120.0,
             "ctx_32768_tps": 80.0,
-            "guard_2k_baseline": 305.0,
-            "guard_2k_ratio": 0.9836,
-            "guard_2k_pass": True,
+            "guard_128_baseline": 490.0,
+            "guard_128_ratio": 0.9796,
+            "guard_128_pass": True,
         }
         res = score(120.0, frontier=100.0, prov=prov)
         self.assertEqual(res["label"], "XL")
         self.assertEqual(res["eval_mode"], "longctx")
         self.assertEqual(res["score_context"], 16384)
-        self.assertEqual(res["ctx_2048_tps"], 300.0)
+        self.assertEqual(res["ctx_128_tps"], 480.0)
         self.assertEqual(res["ctx_32768_tps"], 80.0)
-        self.assertTrue(res["guard_2k_pass"])
+        self.assertTrue(res["guard_128_pass"])
 
     def test_baseline_label_when_no_frontier_exists(self):
         res = score(120.0, frontier=0.0)

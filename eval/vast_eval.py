@@ -195,11 +195,12 @@ def main():
     ap.add_argument("--ref", default="main")
     ap.add_argument("--frontier", type=float, default=0)
     ap.add_argument("--ceiling",  type=float, default=0)
-    ap.add_argument("--guard-2k-baseline", type=float, default=0,
-                    help="main/origin 2k-context tok/s used as the no-regression guard baseline")
+    ap.add_argument("--guard-128-baseline", type=float, default=0,
+                    help="main/origin 128-token decode tok/s used as the no-regression guard baseline")
+    ap.add_argument("--guard-2k-baseline", type=float, default=0, help=argparse.SUPPRESS)
     ap.add_argument("--eval-mode", default=os.environ.get("SPARKINFER_EVAL_MODE", "longctx"),
                     choices=["longctx", "short"],
-                    help="longctx scores 16k with a 2k no-regression guard; short keeps legacy 128-token scoring")
+                    help="longctx scores 16k with a 128-token decode no-regression guard; short keeps legacy 128-token scoring")
     ap.add_argument("--reuse", type=int, default=0)
     ap.add_argument("--keep", action="store_true", help="leave the instance running after eval (default: stop it)")
     ap.add_argument("--destroy", action="store_true", help="destroy after eval instead of stopping (also frees the disk)")
@@ -378,7 +379,8 @@ def main():
         # Governance-tunable via SPARKINFER_DIFFICULTY_{K,REF,MAX}; applies from new evals onward.
         ev = (f"cd /root/sparkinfer && git fetch -q origin main && git checkout -q origin/main -- bench/scripts && "
               f"SI_NO_CHECKOUT=1 SPARKINFER_EVAL_SEED={eval_seed} SPARKINFER_DIFFICULTY_BOOST=1 "
-              f"SPARKINFER_EVAL_MODE={args.eval_mode} SPARKINFER_GUARD_2K_BASELINE={args.guard_2k_baseline} "
+              f"SPARKINFER_EVAL_MODE={args.eval_mode} "
+              f"SPARKINFER_GUARD_128_BASELINE={args.guard_128_baseline or args.guard_2k_baseline} "
               f"MODELS_DIR=/workspace/models LLAMACPP_DIR={LLAMACPP_DIR} "
               f"bench/scripts/evaluate.sh --ref {args.ref} --frontier {args.frontier} --ceiling {args.ceiling}")
         got_result = False

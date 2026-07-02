@@ -46,14 +46,14 @@ ensure_llamacpp "$ARCH"
 
 EVAL_MODE="${SPARKINFER_EVAL_MODE:-longctx}"
 SCORE_CTX="${SPARKINFER_SCORE_CTX:-16384}"
-GUARD_CTX="${SPARKINFER_GUARD_CTX:-2048}"
+GUARD_CTX="${SPARKINFER_GUARD_CTX:-0}"
 REPORT_CTX="${SPARKINFER_REPORT_CTX:-32768}"
 DECODE_TOKENS="${SPARKINFER_DECODE_TOKENS:-128}"
 SCORE_REPS="${SPARKINFER_SCORE_REPS:-3}"
 GUARD_REPS="${SPARKINFER_GUARD_REPS:-1}"
 REPORT_REPS="${SPARKINFER_REPORT_REPS:-0}"
-GUARD_BASELINE="${SPARKINFER_GUARD_2K_BASELINE:-0}"
-GUARD_TOL="${SPARKINFER_GUARD_2K_TOL:-0.98}"
+GUARD_BASELINE="${SPARKINFER_GUARD_128_BASELINE:-${SPARKINFER_GUARD_2K_BASELINE:-0}}"
+GUARD_TOL="${SPARKINFER_GUARD_128_TOL:-${SPARKINFER_GUARD_2K_TOL:-0.98}}"
 
 echo ">> [2/3] speed — ${EVAL_MODE} decode benchmark ..." >&2
 # M1: pin the GPU clock so the absolute tok/s is reproducible (not just same-box-cancelled). Best-
@@ -81,9 +81,9 @@ if [ "$EVAL_MODE" = "short" ]; then
   GUARD_TPS=0; REPORT_TPS=0; GUARD_PASS=true; GUARD_RATIO=0
 else
   if [ "$REPORT_REPS" -gt 0 ]; then
-    echo ">> long-context policy: ${GUARD_CTX} ctx no-regression gate; ${SCORE_CTX} ctx scored; ${REPORT_CTX} ctx telemetry" >&2
+    echo ">> long-context policy: ${DECODE_TOKENS}-token decode no-regression gate; ${SCORE_CTX} ctx scored; ${REPORT_CTX} ctx telemetry" >&2
   else
-    echo ">> long-context policy: ${GUARD_CTX} ctx no-regression gate; ${SCORE_CTX} ctx scored; telemetry disabled" >&2
+    echo ">> long-context policy: ${DECODE_TOKENS}-token decode no-regression gate; ${SCORE_CTX} ctx scored; telemetry disabled" >&2
   fi
   si_run qwen3_gguf_bench "$GGUF" 64 "$GUARD_CTX" >/dev/null 2>&1 || true
   GUARD_TPS="$(median_ctx "$GUARD_CTX" "$GUARD_REPS")"
@@ -149,12 +149,12 @@ data = {
 if "$EVAL_MODE" != "short":
   data.update({
     "guard_context": guard_ctx,
-    "ctx_2048_tps": round(float("$GUARD_TPS"), 2),
+    "ctx_128_tps": round(float("$GUARD_TPS"), 2),
     "ctx_16384_tps": round(float("$TPS"), 2),
-    "guard_2k_baseline": round(float("$GUARD_BASELINE"), 2),
-    "guard_2k_ratio": round(float("$GUARD_RATIO"), 4),
-    "guard_2k_tol": float("$GUARD_TOL"),
-    "guard_2k_pass": "$GUARD_PASS" == "true",
+    "guard_128_baseline": round(float("$GUARD_BASELINE"), 2),
+    "guard_128_ratio": round(float("$GUARD_RATIO"), 4),
+    "guard_128_tol": float("$GUARD_TOL"),
+    "guard_128_pass": "$GUARD_PASS" == "true",
   })
   if report_reps > 0:
     data["report_context"] = report_ctx
@@ -175,7 +175,7 @@ res = {
   "frontier_tps": round(frontier, 2),
   "label": "REJECT",
   "pass": False,
-  "reason": f"2k no-regression gate: {guard:.2f} tok/s < {tol:.0%} of main {base:.2f} tok/s",
+  "reason": f"128-token decode no-regression gate: {guard:.2f} tok/s < {tol:.0%} of main {base:.2f} tok/s",
 }
 if frontier > 0:
   res["delta_tps"] = round(tps - frontier, 2)
