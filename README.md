@@ -133,10 +133,16 @@ proof platform for Qwen3.6 MoE: fastest TPS and TTFT across tracked context size
 DFlash3 as the default decode path, SOTA decode algorithms implemented as first-class
 runtime features, power/thermals optimized, and v1.0 deployed.
 
-**Milestone 2 — all consumer and edge Blackwell.** Extend the same runtime across RTX
-50xx GPUs and unified-memory Blackwell systems such as RTX Spark / GB10 and Jetson Thor
-(`sm_121`), with model residency, prefetch, NVFP4/quantized experts, and bytes-per-token
-optimization tuned for lower-bandwidth memory.
+**Milestone 2 — PRO 6000, personal AI agents, and v2.0.** Extend the same runtime across
+RTX 50xx, RTX PRO 6000, and unified-memory Blackwell systems such as RTX Spark / GB10 and
+Jetson Thor (`sm_121`). The v2.0 target is a production-ready local runtime for personal AI
+agents: model residency, prefetch, NVFP4/quantized experts, long-context memory efficiency,
+and bytes-per-token optimization tuned for lower-bandwidth memory.
+
+**Milestone 3 — physical AI agents and robotics.** Deploy SOTA VLA and world foundation
+models on edge Blackwell to accelerate robotics: low-latency perception-action loops,
+on-device planning, multimodal memory, and runtime support for physical AI agents that must
+operate locally and safely.
 
 ## Contributing
 
