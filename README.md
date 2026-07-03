@@ -17,9 +17,12 @@ _It is designed for the next generation of personal agents like **Openclaw**, lo
 | 4k | **392.65 tok/s** | 292.99 tok/s | 202.65 tok/s | 234.67 tok/s | failed |
 | 16k | **266.14 tok/s** | 245.53 tok/s | 81.89 tok/s | 226.12 tok/s | not run |
 
-sparkinfer and llama.cpp use the same Qwen3-30B-A3B Q4_K_M GGUF. vLLM, SGLang, and
-TensorRT-LLM use their best successful quantized HF checkpoint path from the same RTX 5090
-competitor run; see [`bench/competitors/latest-results.md`](bench/competitors/latest-results.md).
+sparkinfer and llama.cpp are the strict apples-to-apples baseline: same RTX 5090, same
+Qwen3-30B-A3B Q4_K_M GGUF, same 128 generated tokens. The other runtimes do not load GGUF,
+so each uses the fastest successful HF quantized path we could run on the same node:
+vLLM and SGLang use GPTQ Int4; TensorRT-LLM uses NVIDIA NVFP4 and currently fails at 4k.
+Full commands, model IDs, caveats, and raw artifact paths are in
+[`bench/competitors/latest-results.md`](bench/competitors/latest-results.md).
 
 ## How we move fast on SN74
 
