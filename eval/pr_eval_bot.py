@@ -370,6 +370,12 @@ DASH = os.path.join(ROOT, "dashboard")
 DATA_JSON = os.path.join(DASH, "data.json")
 FRONTIER_LABELS = {"XL", "L", "M", "S", "XS", "BASELINE"}
 SPEEDUP_LABELS = {"XL", "L", "M", "S", "XS"}   # verified speedup over main (BASELINE excluded)
+CTX_SERIES = {
+    128:   {"metric": "ctx_128_tps",   "guard": "guard_128_baseline",  "status": "frontier_tps",     "label": "128"},
+    512:   {"metric": "ctx_512_tps",   "guard": "guard_512_baseline",  "status": "longctx_512_tps",  "label": "512"},
+    4096:  {"metric": "ctx_4096_tps",  "guard": "guard_4k_baseline",   "status": "longctx_4k_tps",   "label": "4k"},
+    16384: {"metric": "ctx_16384_tps", "guard": "guard_16k_baseline",  "status": "longctx_16k_tps",  "label": "16k"},
+}
 
 def load_dash():
     try:
@@ -496,6 +502,52 @@ def update_dashboard(repo, pr, areas, res, proof_url=None):
     write_dash(data)
     push_dash(f"dashboard: PR #{num} -> eval:{res.get('label')} ({res.get('tps')} tok/s)")
 
+def _scaled_context_tps(old_tps, measured_tps, guard_tps):
+    if measured_tps is None:
+        return None
+    measured_tps = float(measured_tps)
+    old_tps = float(old_tps or 0)
+    guard_tps = float(guard_tps or 0)
+    if old_tps > 0 and guard_tps > 0:
+        return round(old_tps * (measured_tps / guard_tps), 2)
+    return round(measured_tps, 2)
+
+def _upsert_context_baselines(data, e):
+    """Update the displayed per-context live baselines from a merged longctx eval.
+
+    The eval runs against a same-box main baseline, while the dashboard is calibrated from prior
+    runs. Apply each context's same-box ratio to the displayed value so hardware variance does not
+    make the public chart jump around. Rows never move down from a passing merge; regressions are
+    surfaced by eval labels before merge, not by degrading the historical dashboard frontier.
+    """
+    rows = data.setdefault("context_baselines", [])
+    by_ctx = {int(r.get("ctx")): r for r in rows if r.get("ctx") is not None}
+    changed = {}
+    for ctx, meta in CTX_SERIES.items():
+        measured = e.get(meta["metric"])
+        if measured is None:
+            continue
+        row = by_ctx.get(ctx)
+        old = row.get("sparkinfer_tps") if row else data.get("status", {}).get(meta["status"], 0)
+        new = _scaled_context_tps(old, measured, e.get(meta["guard"]))
+        if new is None:
+            continue
+        if old and new < round(float(old), 2):
+            new = round(float(old), 2)
+        if row:
+            if round(float(row.get("sparkinfer_tps") or 0), 2) != new:
+                row["sparkinfer_tps"] = new
+                changed[ctx] = new
+        else:
+            rows.append({"ctx": ctx, "label": meta["label"], "tokens": 128, "sparkinfer_tps": new})
+            changed[ctx] = new
+        if data.get("status") is not None:
+            cur = data["status"].get(meta["status"])
+            if cur is None or new > round(float(cur), 2):
+                data["status"][meta["status"]] = new
+    rows.sort(key=lambda r: int(r.get("ctx") or 0))
+    return changed
+
 def record_merge(repo, num):
     """A frontier-advancing PR was MERGED → advance the displayed frontier by its verified same-box
     relative gain and add it to the journey (`landed`). Hardware-independent and merged-only;
@@ -504,27 +556,28 @@ def record_merge(repo, num):
     if data is None: return
     e = next((p for p in data.get("prs", []) if p.get("num") == num), None)
     if not e or e.get("label") not in SPEEDUP_LABELS: return                 # only verified speedups
-    if e.get("eval_mode") == "longctx" and int(e.get("score_context") or 0) == 16384:
+    if e.get("eval_mode") == "longctx" and int(e.get("score_context") or 0) in (512, 4096, 16384):
         if any(m.get("pr") == num for m in data.get("landed_longctx", [])): return
-        old_f = round(data["status"].get("longctx_16k_tps") or e.get("frontier_tps") or 0, 2)
-        gain = (e.get("delta_pct") or 0) / 100.0
-        new_f = round(old_f * (1 + gain), 2) if old_f and gain > 0 else round(e.get("tps") or 0, 2)
-        data["status"]["longctx_16k_tps"] = new_f
-        if e.get("ctx_128_tps") is not None:   data["status"]["longctx_128_tps"] = round(e["ctx_128_tps"], 2)
-        if e.get("ctx_512_tps") is not None:   data["status"]["longctx_512_tps"] = round(e["ctx_512_tps"], 2)
-        if e.get("ctx_4096_tps") is not None:  data["status"]["longctx_4k_tps"] = round(e["ctx_4096_tps"], 2)
-        if e.get("ctx_2048_tps") is not None:  data["status"]["longctx_2k_tps"] = round(e["ctx_2048_tps"], 2)
-        if e.get("ctx_32768_tps") is not None: data["status"]["longctx_32k_tps"] = round(e["ctx_32768_tps"], 2)
+        score_ctx = int(e.get("score_context") or 0)
+        old_f = round((next((r.get("sparkinfer_tps") for r in data.get("context_baselines", [])
+                             if int(r.get("ctx") or 0) == score_ctx), None)
+                       or data["status"].get(CTX_SERIES[score_ctx]["status"])
+                       or e.get("frontier_tps") or 0), 2)
+        changed = _upsert_context_baselines(data, e)
+        new_f = round((next((r.get("sparkinfer_tps") for r in data.get("context_baselines", [])
+                             if int(r.get("ctx") or 0) == score_ctx), None)
+                       or changed.get(score_ctx) or e.get("tps") or 0), 2)
         if e.get("top1") is not None: data["status"]["longctx_token_match"] = round(e["top1"], 4)
         if e.get("kl") is not None:   data["status"]["longctx_kl"] = round(e["kl"], 4)
         short = re.sub(r"^\w+(\([^)]*\))?:\s*", "", e.get("title", ""))[:28]
         landed = [m for m in data.get("landed_longctx", []) if m.get("pr") != num]
         landed.append({"name": short or f"PR #{num}", "tps": new_f, "pr": num,
-                       "ctx": 16384, "date": datetime.date.today().isoformat()})
+                       "ctx": score_ctx, "date": datetime.date.today().isoformat()})
         data["landed_longctx"] = sorted(landed, key=lambda m: m["tps"])
         data["updated"] = datetime.date.today().isoformat()
         write_dash(data)
-        push_dash(f"dashboard: PR #{num} merged -> 16k frontier {new_f} tok/s")
+        push_dash(f"dashboard: PR #{num} merged -> {CTX_SERIES[score_ctx]['label']} frontier {new_f} tok/s")
+        append_frontier_ledger(repo, num, e, old_f, new_f)
         return
 
     if any(m.get("pr") == num for m in data.get("landed", [])): return       # already recorded
@@ -536,6 +589,11 @@ def record_merge(repo, num):
     gain = (e.get("delta_pct") or 0) / 100.0
     new_f = round(old_f * (1 + gain), 2) if gain > 0 else max(old_f, round(e.get("tps") or 0, 2))
     data["status"]["frontier_tps"] = new_f
+    if e.get("eval_mode") == "longctx":
+        _upsert_context_baselines(data, e)
+        row128 = next((r for r in data.get("context_baselines", []) if int(r.get("ctx") or 0) == 128), None)
+        if row128:
+            row128["sparkinfer_tps"] = max(round(float(row128.get("sparkinfer_tps") or 0), 2), new_f)
     if e.get("top1") is not None: data["status"]["token_match"] = round(e["top1"], 4)
     if e.get("kl") is not None:   data["status"]["kl"] = round(e["kl"], 4)
     short = re.sub(r"^\w+(\([^)]*\))?:\s*", "", e.get("title", ""))[:28]      # strip "area(x): " prefix

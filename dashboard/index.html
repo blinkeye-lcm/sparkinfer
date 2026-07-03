@@ -249,13 +249,14 @@
   ].map(k=>`<div class="kpi"><div class="lab">${k.lab}</div><div class="val">${k.val} <span>${k.unit}</span></div><div class="note">${k.note}</div></div>`).join("");
 
   // Optimization-journey chart: recorded passes (history) + live optimizations that have LANDED
-  // on the 128-token frontier and the 16k frontier.
+  // on the 128-token frontier and guarded long-context frontiers.
   (function(){
+    const ctxName = ctx => ctx===128 ? "128" : ctx===512 ? "512" : ctx===4096 ? "4k" : ctx===16384 ? "16k" : (ctx ? `${ctx}` : "ctx");
     const hist = D.passes.map(p=>({name:p.name, sub:p.what, tps:p.tps, live:false}));
     const live = (D.landed||[]).map(l=>({name:l.name, sub:"PR #"+l.pr+" · "+l.date, tps:l.tps, live:true}));
-    const long = (D.landed_longctx||[]).map(l=>({name:l.name, sub:(l.release?`${l.release} · ${l.author||"ai-hpc"} · `:"PR #"+l.pr+" · ")+"16k · "+l.date, tps:l.tps, long:true, baseline:!!l.baseline, fixed:!!l.fixed_baseline}));
+    const long = (D.landed_longctx||[]).map(l=>({name:l.name, sub:(l.release?`${l.release} · ${l.author||"ai-hpc"} · `:"PR #"+l.pr+" · ")+ctxName(l.ctx)+" · "+l.date, tps:l.tps, long:true, baseline:!!l.baseline, fixed:!!l.fixed_baseline}));
     const pts = hist.concat(live, long);
-    $("passes-hint").textContent = `${pts[0].tps} → ${s.frontier_tps} tok/s · 16k frontier ${s.longctx_16k_tps||"—"} tok/s`;
+    $("passes-hint").textContent = `${pts[0].tps} → ${s.frontier_tps} tok/s · 4k ${s.longctx_4k_tps||"—"} · 16k ${s.longctx_16k_tps||"—"} tok/s`;
     const W=760,H=336,padL=12,padR=12,padT=30,padB=106, cw=W-padL-padR, ch=H-padT-padB;
     const maxT=Math.max(...pts.map(p=>p.tps)), slot=cw/pts.length, bw=Math.min(slot*0.56,60);
     const esc=t=>String(t).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
@@ -283,7 +284,7 @@
         `<span style="display:flex;align-items:center;gap:6px"><span style="width:11px;height:11px;border-radius:3px;background:#0E8A16"></span>landed on frontier · RTX 5090 (live)</span>`+
         `<span style="display:flex;align-items:center;gap:6px"><span style="width:11px;height:11px;border-radius:3px;background:#6E6E7A"></span>fixed split before v0.3.3</span>`+
         `<span style="display:flex;align-items:center;gap:6px"><span style="width:11px;height:11px;border-radius:3px;background:#D14D72"></span>ai-hpc v0.3.3 long-context POC</span>`+
-        `<span style="display:flex;align-items:center;gap:6px"><span style="width:11px;height:11px;border-radius:3px;background:#B8860B"></span>landed on 16k frontier</span>`+
+        `<span style="display:flex;align-items:center;gap:6px"><span style="width:11px;height:11px;border-radius:3px;background:#B8860B"></span>landed on context frontier</span>`+
       `</div>`;
   })();
 
