@@ -29,6 +29,14 @@ Runtime footprint, excluding model weights and Python launcher scripts:
 | SGLang | runtime + native kernel packages | 1.9 GB | 743x smaller |
 | TensorRT-LLM | runtime package | 3.6 GB | 1,430x smaller |
 
+LLM quality check, 25% benchmark tier, 196 items:
+
+| runtime | BFCL | GSM8K | HumanEval | IFEval | MMLU-Pro | overall |
+|---|---:|---:|---:|---:|---:|---:|
+| sparkinfer GGUF | 73.33% | 84.85% | 80.00% | 77.08% | 44.00% | 64.37% |
+| llama.cpp GGUF | 72.00% | 90.91% | 80.00% | 64.58% | 48.00% | 65.90% |
+| vLLM AWQ | 76.00% | 84.85% | 80.00% | 77.08% | 48.00% | 66.92% |
+
 sparkinfer and llama.cpp use the same GGUF on the same RTX 5090. Other runtimes cannot load
 GGUF, so the table uses their fastest successful HF quantized path: vLLM/SGLang GPTQ Int4,
 TensorRT-LLM NVFP4. Details: [`bench/competitors/latest-results.md`](bench/competitors/latest-results.md).
