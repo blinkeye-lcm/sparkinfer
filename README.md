@@ -107,8 +107,8 @@ before opening a PR.
 labeled **XL / L / M / S / XS** by the deterministic eval loop. A speedup can land in
 128, 512, 4k, or 16k context; sub-2% gains are never aggregated across contexts.
 Tooling, bench, docs, and refactors are welcome but score 0 unless they produce a verified
-frontier speedup. See [`.gittensor/weights.json`](.gittensor/weights.json) and the
-[org reward model](https://github.com/gittensor-ai-lab).
+frontier speedup. See [`.gittensor/weights.json`](.gittensor/weights.json) and
+[`docs/miner-guide.md`](docs/miner-guide.md).
 
 ## Build
 
@@ -144,10 +144,10 @@ NVFP4 experts, residency, prefetch, and eliminating redundant weight reads.
 Source-required and reproducible — the validator builds your PR from source (the
 prebuilt binaries are a run convenience, not a submission format). Before a PR, run
 `bench/scripts/bench.sh` (speed) and `bench/scripts/accuracy.sh` (accuracy must hold:
-~100% top-1 + KL ≈ 0 vs the prior build). Contributions are rewarded on SN74 by the
+token-match and KL must stay within the current eval thresholds vs the prior build).
+Contributions are rewarded on SN74 by the
 **verified marginal speedup** added over the live frontier, correctness-gated against a
-frozen llama.cpp reference. See [CONTRIBUTING.md](CONTRIBUTING.md) and the
-[org reward model](https://github.com/gittensor-ai-lab).
+frozen llama.cpp reference. See [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## Automated evaluation
 
