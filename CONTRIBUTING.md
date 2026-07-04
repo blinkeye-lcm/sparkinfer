@@ -4,6 +4,14 @@ sparkinfer is the engineering arm of **SN74 on Gittensor**. Contributions are re
 for **real, verified inference-speed engineering** — not benchmark gaming. This guide is
 how to make a contribution that counts.
 
+## Built through Gittensor
+
+Gittensor helps power SPARKINFER through SN74: the project receives subnet emissions,
+contributors submit source PRs, the evaluator rebuilds those PRs on real RTX 5090 hardware,
+and rewards are assigned from verified marginal speedups that keep correctness intact.
+You do not need to be in Discord or understand the subnet internals to contribute, but the
+source of the incentive loop is clear: SPARKINFER is built through **SN74 on Gittensor**.
+
 ## Principles
 
 - **Source-required & reproducible.** The validator builds your PR from source. No
@@ -38,7 +46,7 @@ bench/scripts/accuracy.sh --download
 top-1, currently met at ~96–99%.) If `compute-sanitizer` is available, your kernels
 must be clean (0 errors).
 
-## How rewards work (SN74)
+## How rewards work (SN74 on Gittensor)
 
 **Speedup-only.** You're paid for the **verified marginal speedup** your PR adds over the
 current best ("frontier"), not your rank — so "copy the leader + ε" pays ≈ ε. Both **current
