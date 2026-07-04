@@ -19,7 +19,7 @@ it is stopped and a fresh box is provisioned via the vast API automatically; the
 
 Env: VAST_API_KEY, SSH_KEY (default ~/.ssh/id_ed25519), LLAMACPP_DIR, EVAL_IMAGE, EVAL_REPO, VAST_INSTANCE_FILE.
 """
-import argparse, json, os, random, subprocess, sys, time
+import argparse, json, os, random, shlex, subprocess, sys, time
 from vastai import VastAI
 
 REPO    = os.environ.get("EVAL_REPO",  "https://github.com/gittensor-ai-lab/sparkinfer")
@@ -355,6 +355,16 @@ def main():
             print(f">> setup rc={sr.returncode} — stdout/stderr tail (continuing):")
             sys.stdout.write((sr.stdout or "")[-1500:]); sys.stdout.write((sr.stderr or "")[-1500:])
 
+        # HF auth: write the token (from the local HF_TOKEN env, never committed) to the box's HF
+        # token file so all hf downloads authenticate — lifts anonymous rate limits + reaches the
+        # gated Qwen tokenizer repos. Sent in its own call so it never lands in a printed error tail.
+        hf_token = os.environ.get("HF_TOKEN", "").strip()
+        if hf_token:
+            sh(host, port, "mkdir -p ~/.cache/huggingface && "
+                           f"printf %s {shlex.quote(hf_token)} > ~/.cache/huggingface/token && "
+                           "chmod 600 ~/.cache/huggingface/token", timeout=30)
+            print(">> HF token configured on box (authenticated model downloads)")
+
         # Pre-cache the model in a nohup background job so SSH drops don't abort the download.
         # If the file is already present (reused box), this is instant. Otherwise we poll for the
         # sentinel file created when the download completes.
@@ -388,20 +398,29 @@ def main():
                 print("!! model download timed out — evaluate.sh will retry (may add time)")
 
         if args.dual:
-            # Dual-model needs the Qwen3.6 GGUF too. HF (unsloth) — no Drive mirror; slow on some
-            # hosts but cached in /workspace after the first pull. evaluate_dual's ensure_model is the
-            # backstop if this times out. tokenizer.json comes from ensure_tokenizer at score time.
-            # Separate dir from Qwen3 — the two models have different tokenizers; evaluate_dual.sh's
-            # primary MODELS_DIR defaults to <guard dir>36 (i.e. /workspace/models -> /workspace/models36).
+            # Dual-model needs the Qwen3.6 GGUF too. Google Drive first (gdown handles the large-file
+            # confirm token) — HF is throttled to ~KB/s from many vast hosts; HF/curl are the fallback.
+            # Override the Drive id with MODEL36_GDRIVE_ID="" to disable. Separate dir from Qwen3 (the
+            # two models have different tokenizers); evaluate_dual.sh's primary MODELS_DIR defaults to
+            # <guard dir>36 (i.e. /workspace/models -> /workspace/models36).
             P36_DIR  = "/workspace/models36"
             P36_PATH = f"{P36_DIR}/Qwen3.6-35B-A3B-UD-Q4_K_M.gguf"
             P36_READY = "/tmp/sparkinfer_model36_ready"
+            P36_GDRIVE_ID = os.environ.get("MODEL36_GDRIVE_ID", "1Ayx_DYLnl1v5aKMiSGyO4KTmwVun2mVt")
             p36 = (
                 f"if [ -f '{P36_PATH}' ]; then touch '{P36_READY}' && echo cached; "
                 f"elif [ -f '{P36_READY}' ]; then echo already_running; "
                 f"else mkdir -p {P36_DIR} && rm -f '{P36_READY}'; "
                 f"nohup bash -c '"
-                f"  HF_HUB_DISABLE_XET=1 hf download unsloth/Qwen3.6-35B-A3B-GGUF "
+                f"  gid=\"{P36_GDRIVE_ID}\"; "
+                f"  if [ -n \"$gid\" ]; then pip install -q gdown 2>>/tmp/dl36.log; "
+                f"    gdown --no-cookies -q \"$gid\" -O {P36_PATH}.part >>/tmp/dl36.log 2>&1; "
+                f"    sz=$(stat -c%s {P36_PATH}.part 2>/dev/null || echo 0); "
+                f"    if [ \"$sz\" -gt 15000000000 ]; then mv -f {P36_PATH}.part {P36_PATH}; "
+                f"    else echo \"gdrive failed (sz=$sz) -> HF\" >>/tmp/dl36.log; rm -f {P36_PATH}.part; fi; "
+                f"  fi; "
+                f"  [ -f {P36_PATH} ] "
+                f"  || HF_HUB_DISABLE_XET=1 hf download unsloth/Qwen3.6-35B-A3B-GGUF "
                 f"       Qwen3.6-35B-A3B-UD-Q4_K_M.gguf --local-dir {P36_DIR} >>/tmp/dl36.log 2>&1 "
                 f"  || curl -fL -C - https://huggingface.co/unsloth/Qwen3.6-35B-A3B-GGUF/resolve/main/Qwen3.6-35B-A3B-UD-Q4_K_M.gguf"
                 f"       -o {P36_PATH} >>/tmp/dl36.log 2>&1; "
