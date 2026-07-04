@@ -48,6 +48,41 @@ The default eval target is now multi-context decode:
 
 Set `SPARKINFER_EVAL_MODE=short` or pass `--eval-mode short` to keep the legacy 128-token scoring path.
 
+## Dual-model scoring: Qwen3.6 primary, Qwen3-30B no-regression guard
+
+`--dual` scores **Qwen3.6-35B-A3B** (the current optimization frontier) and, in the same build on the
+same box, **guards Qwen3-30B-A3B against regression** — an optimization that speeds up Qwen3.6 must
+not quietly break or slow the shipped Qwen3 path.
+
+```
+build once ─► PRIMARY  Qwen3.6 : 128/512/4k/16k/32k speed + token-match/KL vs llama.cpp ─► eval:<LABEL>
+           └► GUARD    Qwen3-30B: same speed sweep + accuracy gate ─► must NOT regress, else REJECT
+```
+
+- The **eval:<label>** (XS…XL / none / REJECT) is driven **only by Qwen3.6** — its strongest single
+  context improvement over the Qwen3.6 frontier, same significance/bucket/difficulty rules as above.
+- The **Qwen3-30B guard** re-runs the full 5-context speed sweep **and** the top-1/KL accuracy gate.
+  If Qwen3 drops below 98% of its own same-box `origin/main` at *any* context, **or** breaks parity
+  with llama.cpp (top-1 < 0.90 or KL > 0.20), the whole submission is **REJECTed** with a
+  `no-regression guard` reason and `regression-qwen3-<ctx>` detail — regardless of the Qwen3.6 gain.
+- Both models' measurements merge into one `RESULT_JSON`; the Qwen3 guard block is under `guard`.
+- Cost: two ~20 GB model loads + two llama.cpp accuracy passes, run **sequentially** (they don't fit
+  in VRAM together), so a dual eval is ~2× a single-model eval.
+
+```bash
+# Qwen3.6 scored, Qwen3-30B guarded (baselines are same-box origin/main tok/s per context):
+python eval/vast_eval.py --reuse <id> --dual \
+  --primary-frontier <qwen36_best_tps> --ceiling <roofline> \
+  --p-guard-128-baseline 23.2 --p-guard-512-baseline 23.2 --p-guard-4k-baseline 23.0 \
+  --p-guard-16k-baseline <..> --p-guard-32k-baseline <..> \
+  --guard-128-baseline 331 --guard-512-baseline 331 --guard-4k-baseline 322 \
+  --guard-16k-baseline 330 --guard-32k-baseline 300
+```
+
+The on-box orchestrator is `bench/scripts/evaluate_dual.sh` (builds once, calls the model-agnostic
+`evaluate.sh` twice via `SI_SKIP_BUILD=1`, merges). Qwen3.6 runs the same UD-Q4_K_M GGUF the runtime
+now loads by default (mixed Q5_K experts).
+
 ## Verdict (stdout)
 
 ```json
