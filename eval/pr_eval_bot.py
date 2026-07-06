@@ -783,9 +783,9 @@ def main():
     args = ap.parse_args()
     # Qwen3.6 same-box origin/main baselines (128/512/4k). Env-overridable; measured 2026-07 on RTX 5090.
     QWEN36_BASE = {
-        "128": float(os.environ.get("SPARKINFER_QWEN36_128", "23.22")),
-        "512": float(os.environ.get("SPARKINFER_QWEN36_512", "23.16")),
-        "4k":  float(os.environ.get("SPARKINFER_QWEN36_4K",  "23.03")),
+        "128": float(os.environ.get("SPARKINFER_QWEN36_128", "170.84")),
+        "512": float(os.environ.get("SPARKINFER_QWEN36_512", "170.0")),
+        "4k":  float(os.environ.get("SPARKINFER_QWEN36_4K",  "165.0")),
         "llama128": float(os.environ.get("SPARKINFER_QWEN36_LLAMA_128", "275.81")),
         "llama512": float(os.environ.get("SPARKINFER_QWEN36_LLAMA_512", "275.61")),
         "llama4k":  float(os.environ.get("SPARKINFER_QWEN36_LLAMA_4K",  "276.30")),
@@ -986,6 +986,26 @@ def main():
               f"(= {SANITY_FRAC*known_frontier:.1f}) — box underperforming (cold/throttling/degraded). "
               f"Aborting; NO PRs graded. Re-run on a warm, stable box.")
         return
+
+        # In dual mode, also measure the Qwen3.6 primary's same-box origin/main baselines —
+        # the per-PR eval scores each Qwen3.6 PR directly against these, not against stale
+        # cold-start config constants (was 23.22, now measured fresh each run).
+        if args.dual:
+            print(f">> dual-mode: measuring Qwen3.6 same-box baseline on instance {base_iid} ...")
+            p36_cmd = [sys.executable, os.path.join(HERE, "vast_eval.py"), "--reuse", str(base_iid),
+                        "--ref", "origin/main", "--frontier", "0", "--ceiling", str(args.ceiling),
+                        "--eval-mode", "longctx", "--keep"]
+            if PINNED_INSTANCE and str(base_iid) == PINNED_INSTANCE: p36_cmd.append("--pinned")
+            p36_br = subprocess.run(p36_cmd, cwd=ROOT, capture_output=True, text=True, timeout=14400)
+            p36_bl = next((l for l in p36_br.stdout.splitlines() if l.startswith("RESULT_JSON")), None)
+            p36_res = json.loads(p36_bl[len("RESULT_JSON "):]) if p36_bl else {}
+            if p36_res.get("pass") and p36_res.get("tps"):
+                QWEN36_BASE["128"] = float(p36_res.get("ctx_128_tps") or p36_res.get("tps") or 0)
+                QWEN36_BASE["512"] = float(p36_res.get("ctx_512_tps") or 0)
+                QWEN36_BASE["4k"]  = float(p36_res.get("ctx_4096_tps") or 0)
+                print(f"  Qwen3.6 same-box main: 128={QWEN36_BASE['128']} 512={QWEN36_BASE['512']} 4k={QWEN36_BASE['4k']} tok/s")
+            else:
+                print(f"  Qwen3.6 baseline failed — using config defaults: 128={QWEN36_BASE['128']} 512={QWEN36_BASE['512']} 4k={QWEN36_BASE['4k']}")
 
     # Run all pending evals on the SAME instance: pass --keep so vast_eval.py never stops/destroys
     # the box mid-queue. The bot stops the instance once after ALL PRs finish (or if the instance

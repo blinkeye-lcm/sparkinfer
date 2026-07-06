@@ -77,10 +77,8 @@ run_model() {  # $1=role  $2=file $3=repo $4=tok  $5=frontier  $6..=SPARKINFER_*
 # distance), mirroring the single-model eval. The guard is never scored, so no boost there.
 P_DIFF_REF="${SPARKINFER_P_LLAMA_128_BASELINE:-0}"
 
-# Qwen3.6 is scored on 128/512/4k ONLY for now — its long-context (16k/32k) decode is currently far
-# too slow (35B MoE dequant-bound) to sweep every eval. SCORE_REPS=0 skips the 16k context, GUARD_32K
-# _REPS=0 skips 32k (median_ctx returns 0 -> excluded from scoring + guards); the 3 live contexts get
-# 3-rep medians for a stable scored number. Re-enable 16k/32k by passing their reps + baselines.
+# Qwen3.6 is scored on 128/512/4k ONLY for now — long-context is too slow to sweep every eval.
+# The 3 live contexts get 3-rep medians. Re-enable 16k/32k by passing their reps + baselines.
 PRIMARY_JSON="$(run_model primary "$P_FILE" "$P_REPO" "$P_TOK" 0 \
   MODELS_DIR="$P_DIR" MODEL_SHA256="${QWEN36_MODEL_SHA256:-}" \
   SPARKINFER_SCORE_REPS=0 SPARKINFER_GUARD_32K_REPS=0 \
