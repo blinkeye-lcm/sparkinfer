@@ -1609,30 +1609,30 @@ window.SPARKINFER = {
   "qwen36": {
     "model": "Qwen3.6-35B-A3B · UD-Q4_K_M",
     "arch": "hybrid Gated-DeltaNet + full-attn MoE · 256 experts top-8 · hd256",
-    "frontier_tps": 300.16,
+    "frontier_tps": 380.65,
     "baseline_tps": 23.03,
     "ref_name": "llama.cpp",
     "ref_tps": 275.81,
-    "token_match": 0.9786,
-    "kl": 0.017,
+    "token_match": 0.9522,
+    "kl": 0.0339,
     "note": "scored vs same-box main · GDN_FAST default ON · #241 #243 #266 merged",
     "ctx": [
       {
         "label": "128",
         "color": "#7B5DFF",
-        "tps": 300.16,
+        "tps": 380.65,
         "ref_tps": 275.81
       },
       {
         "label": "512",
         "color": "#0E8A16",
-        "tps": 296.76,
+        "tps": 374.79,
         "ref_tps": 275.61
       },
       {
         "label": "4k",
         "color": "#B8860B",
-        "tps": 287.91,
+        "tps": 360.62,
         "ref_tps": 276.3
       }
     ]
@@ -1674,7 +1674,7 @@ window.SPARKINFER = {
       "label": "L"
     },
     {
-      "name": "QK-norm+RoPE+KV-append v2",
+      "name": "shared-expert MMVQ + QK-norm",
       "tps": 380.65,
       "pr": 269,
       "date": "2026-07-06",
