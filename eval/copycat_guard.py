@@ -1,18 +1,15 @@
 #!/usr/bin/env python3
 """Real-time copycat guard — triggered by pull_request_target (opened).
 
-Fires the instant a PR is opened, fingerprints its diff against every earlier
-open PR that touches the same file(s), and responds with a graduated policy:
+Multi-layer copycat detection, fires the instant a PR is opened:
 
-  ≥80% containment  →  instant block + close (zero tolerance — unchanged)
-  70–79%            →  copycat-warn label + warning comment (no close, no block)
-  2 warning strikes →  block + close (just like ≥80%)
+  LAYER 1 (containment): ≥80% → instant block + close (zero tolerance)
+  LAYER 2 (containment): 70–79% → copycat-warn label + warning comment
+  LAYER 3 (structural) : 40–69% with lev≥0.70+cos≥0.60 → bump to WARN
+  2 warning strikes (any layer) → block + close (just like ≥80%)
 
-Self-resubmissions (same author iterating on their own earlier PR) are excluded.
-Only copycat detection runs here — no GPU, no eval, no scoring.
-
-Invoked by .github/workflows/copycat-guard.yml via:
-  PR_NUM=<num> python3 eval/copycat_guard.py
+Self-resubmissions (same author iterating on own earlier PR) are excluded.
+Invoked by .github/workflows/copycat-guard.yml via:  PR_NUM=<num> python3 eval/copycat_guard.py
 """
 import json, os, subprocess, sys
 from datetime import date
@@ -23,18 +20,25 @@ ROOT = Path(__file__).resolve().parents[1]
 COPYCAT_LOG = ROOT / ".github" / "copycats.json"
 DENYLIST_FILE = ROOT / ".github" / "blocked-contributors.txt"
 FLAG_FILE = ROOT / ".github" / "FLAGGED.md"
-COPYCAT_CONTAINMENT = 0.80        # ≥80% → instant block + close
-COPYCAT_WARN         = 0.70        # 70–79% → warning label + comment (first time), block on second strike
-MAX_WARNINGS         = 2           # block an account on this many warnings across any PRs
 FLAG_LABEL = "flagged:gaming"
+
+# Detection thresholds
+COPYCAT_CONTAINMENT = 0.80   # layer 1: ≥80% → instant block + close
+COPYCAT_WARN         = 0.70   # layer 2: 70–79% → warning
+MAX_WARNINGS         = 2      # block on this many warnings across any PRs
+LEV_THRESH           = 0.70   # layer 3: token Levenshtein ratio ≥ this
+BIGRAM_COSINE_THRESH = 0.60   # layer 3: bigram cosine similarity ≥ this
+STRUCT_MIN            = 0.40   # layer 3: containment must be at least this to trigger
 
 
 def gh(args):
     return subprocess.run(["gh"] + args, capture_output=True, text=True)
 
 
+# ---- fingerprinting (both layers) ----
+
 def pr_fingerprint(repo, num):
-    """(changed files, normalized non-empty added lines) from the PR's unified diff."""
+    """(changed files, normalized non-empty added lines) — for layer 1/2 containment."""
     diff = gh(["pr", "diff", str(num), "-R", repo]).stdout or ""
     files, added = set(), set()
     for line in diff.splitlines():
@@ -53,6 +57,63 @@ def containment(copy_added, orig_added):
     return len(copy_added & orig_added) / len(copy_added)
 
 
+def pr_added_tokens(repo, num):
+    """All non-comment tokens from added lines — for layer 3 structural comparison."""
+    diff = gh(["pr", "diff", str(num), "-R", repo]).stdout or ""
+    tokens = []
+    for line in diff.splitlines():
+        if line.startswith("+") and not line.startswith("+++"):
+            s = line[1:].strip()
+            if s and not s.startswith(("//", "#", "/*", "*")):
+                tokens.extend(t for t in s.split() if len(t) > 1 and not t.startswith("//"))
+    return tokens
+
+
+# ---- layer 3: structural similarity ----
+
+def levenshtein_ratio(tokens_a, tokens_b):
+    """Token-level edit similarity (0–1) via difflib SequenceMatcher."""
+    if not tokens_a or not tokens_b:
+        return 0.0
+    import difflib
+    return difflib.SequenceMatcher(None, tokens_a, tokens_b).ratio()
+
+
+def bigram_cosine(tokens_a, tokens_b):
+    """Cosine similarity (0–1) of bigram frequency vectors."""
+    from collections import Counter
+    if len(tokens_a) < 2 or len(tokens_b) < 2:
+        return 0.0
+    bg_a = Counter(zip(tokens_a, tokens_a[1:]))
+    bg_b = Counter(zip(tokens_b, tokens_b[1:]))
+    common = set(bg_a) & set(bg_b)
+    if not common:
+        return 0.0
+    dot = sum(bg_a[k] * bg_b[k] for k in common)
+    norm_a = sum(v * v for v in bg_a.values()) ** 0.5
+    norm_b = sum(v * v for v in bg_b.values()) ** 0.5
+    if norm_a == 0 or norm_b == 0:
+        return 0.0
+    return dot / (norm_a * norm_b)
+
+
+def structural_similarity(repo, copy_num, orig_num, containment_pct):
+    """Compute lev + bigram-cos for a borderline candidate. Returns (lev, cos, fired).
+    fired=True when containment >= 40% AND lev >= 0.70 AND cos >= 0.60."""
+    if containment_pct < STRUCT_MIN:
+        return 0.0, 0.0, False
+    tok_copy = pr_added_tokens(repo, copy_num)
+    tok_orig = pr_added_tokens(repo, orig_num)
+    if not tok_copy or not tok_orig:
+        return 0.0, 0.0, False
+    lev = levenshtein_ratio(tok_copy, tok_orig)
+    cos = bigram_cosine(tok_copy, tok_orig)
+    fired = lev >= LEV_THRESH and cos >= BIGRAM_COSINE_THRESH
+    return lev, cos, fired
+
+
+# ---- policy state management ----
+
 def load_denylist():
     try:
         out = set()
@@ -62,16 +123,13 @@ def load_denylist():
         return out
     except Exception: return set()
 
-
 def load_copycat_log():
     try: return json.load(open(COPYCAT_LOG))
     except Exception: return []
 
-
 def save_copycat_log(log):
     COPYCAT_LOG.parent.mkdir(parents=True, exist_ok=True)
     with open(COPYCAT_LOG, "w") as f: json.dump(log, f, indent=2)
-
 
 def block_account(login, reason):
     cur = load_denylist()
@@ -80,11 +138,23 @@ def block_account(login, reason):
     with open(FLAG_FILE, "a") as f:
         f.write(f"\n## {date.today().isoformat()} — `{login}` (auto-blocked)\n\n{reason}\n")
 
+def push_policy_files():
+    subprocess.run(["git", "-C", str(ROOT), "add",
+                    ".github/copycats.json", ".github/blocked-contributors.txt", ".github/FLAGGED.md"],
+                   capture_output=True)
+    if subprocess.run(["git", "-C", str(ROOT), "diff", "--cached", "--quiet"]).returncode != 0:
+        subprocess.run(["git", "-C", str(ROOT), "commit", "-q",
+                        "-m", "copycat-guard: policy file update"], capture_output=True)
+        subprocess.run(["git", "-C", str(ROOT), "pull", "-q", "--rebase", "origin", "main"],
+                       capture_output=True)
+        subprocess.run(["git", "-C", str(ROOT), "push", "-q", "origin", "main"], capture_output=True)
+
+
+# ---- PR actions ----
 
 def flag_copycat(repo, num, original, author):
-    """≥80% containment — instant block + close (zero tolerance)."""
-    subprocess.run(["gh", "pr", "edit", str(num), "-R", repo, "--add-label", "copycat"],
-                   capture_output=True)
+    """Layer 1: ≥80% containment → block + close."""
+    subprocess.run(["gh", "pr", "edit", str(num), "-R", repo, "--add-label", "copycat"], capture_output=True)
     body = (f"<!-- sparkinfer-copycat -->\n## 🐈 Flagged: copycat (real-time guard)\n\n"
             f"This PR re-submits substantially the same diff as the earlier #{original} by "
             f"a different author. Duplicating another contributor's work is treated as gaming "
@@ -94,20 +164,24 @@ def flag_copycat(repo, num, original, author):
     subprocess.run(["gh", "pr", "comment", str(num), "-R", repo, "--body", body], capture_output=True)
 
 
-def warn_copycat(repo, num, original, author, strike_count, containment_pct):
-    """70–79% containment — warning label + comment, no close, no block. Block on 2nd strike."""
-    subprocess.run(["gh", "pr", "edit", str(num), "-R", repo, "--add-label", "copycat-warn"],
-                   capture_output=True)
-    will_block = (strike_count >= MAX_WARNINGS)
-    action_line = ("\n\nThis is the **second** copycat-like submission — the account is now "
-                   "**blocked** and the PR closed." if will_block
-                   else f"\n\nThis is a **warning** (strike {strike_count}/{MAX_WARNINGS}). "
-                   "A second copycat-like submission will result in an automatic block.\n\n"
-                   "If this is a legitimate independent implementation, comment on this PR and "
-                   "a maintainer will review.")
+def warn_copycat(repo, num, original, author, strike_count, containment_pct, structural=False):
+    """Layer 2/3: 70–79% or structural flip → warning. Block on 2nd strike."""
+    subprocess.run(["gh", "pr", "edit", str(num), "-R", repo, "--add-label", "copycat-warn"], capture_output=True)
+    will_block = bool(strike_count >= MAX_WARNINGS)
+    if structural:
+        head = f"**{containment_pct:.0f}% containment** + structural similarity "
+        head += "(Levenshtein + bigram cosine both above threshold vs this PR's code shape)"
+    else:
+        head = f"**{containment_pct:.0f}% containment** in the earlier #{original}"
+    if will_block:
+        tail = ("\n\nThis is the **second** copycat-like submission — the account is now "
+                "**blocked** and the PR closed.")
+    else:
+        tail = (f"\n\n⚠️ Warning (strike {strike_count}/{MAX_WARNINGS}). A second copycat-like "
+                "submission will result in an automatic block. If this is a legitimate independent "
+                "implementation, comment on this PR and a maintainer will review.")
     body = (f"<!-- sparkinfer-copycat-warn -->\n## 🐈 Copycat warning (real-time guard)\n\n"
-            f"This PR is **{containment_pct:.0f}% contained** in the earlier #{original} "
-            f"by a different author, in the 70–79% warning range.{action_line}")
+            f"{head} by a different author.{tail}")
     subprocess.run(["gh", "pr", "comment", str(num), "-R", repo, "--body", body], capture_output=True)
     if will_block:
         close_blocked_pr(repo, num, {author})
@@ -115,47 +189,38 @@ def warn_copycat(repo, num, original, author, strike_count, containment_pct):
 
 
 def close_blocked_pr(repo, num, hits):
-    subprocess.run(["gh", "pr", "edit", str(num), "-R", repo, "--add-label", FLAG_LABEL],
-                   capture_output=True)
+    subprocess.run(["gh", "pr", "edit", str(num), "-R", repo, "--add-label", FLAG_LABEL], capture_output=True)
     who = ", ".join(f"`{h}`" for h in sorted(hits))
-    body = ("<!-- sparkinfer-flagged -->\n"
-            "## 🚩 Flagged: eval-gaming\n\n"
-            f"This PR involves an account blocked for gaming the SN74 emission mechanism "
-            f"(sybil / coordinated duplicate farming): {who}.\n\n"
-            "Per the project's no-gaming policy these accounts are blocked: the PR is **not "
-            "evaluated, scored, or merged**. See [`.github/FLAGGED.md`]"
-            "(../blob/main/.github/FLAGGED.md) for the evidence and record.")
+    body = ("<!-- sparkinfer-flagged -->\n## 🚩 Flagged: eval-gaming\n\n"
+            f"Blocked account(s) for gaming the SN74 emission mechanism (sybil / coordinated "
+            f"duplicate farming): {who}. The PR is **not evaluated, scored, or merged**.\n\n"
+            f"See [`.github/FLAGGED.md`](../blob/main/.github/FLAGGED.md).")
     subprocess.run(["gh", "pr", "comment", str(num), "-R", repo, "--body", body], capture_output=True)
     return subprocess.run(["gh", "pr", "close", str(num), "-R", repo]).returncode == 0
 
 
 def pr_author_login(repo, num):
-    info = json.loads(gh(["pr", "view", str(num), "-R", repo,
-                          "--json", "author"]).stdout or "{}")
+    info = json.loads(gh(["pr", "view", str(num), "-R", repo, "--json", "author"]).stdout or "{}")
     return (info.get("author") or {}).get("login", "")
 
 
-# ---- main (triggered by pull_request_target) ----
+# ---- main ----
+
 def main():
     pr_num = int(os.environ.get("PR_NUM") or 0)
     if not pr_num:
         print("PR_NUM not set — nothing to guard"); return
-
     author = pr_author_login(REPO, pr_num)
     print(f"copycat-guard: PR #{pr_num} by {author} — scanning for copycat ...")
 
-    # 1) Already-blocked contributor? Skip — the scheduled bot handles it, double-blocking is noise.
     denylist = load_denylist()
     if author.lower() in denylist:
-        print(f"  author {author} already in denylist — skip")
-        return
+        print(f"  author {author} already in denylist — skip"); return
 
-    # 2) Fingerprint the new PR
     files, added = pr_fingerprint(REPO, pr_num)
     if not added:
-        print(f"  no added lines to scan — not a copycat"); return
+        print("  no added lines to scan — not a copycat"); return
 
-    # 3) Fetch all open PR numbers with earlier numbers (different author, not blocked, not copycat)
     open_prs = json.loads(gh(["pr", "list", "-R", REPO, "--state", "open",
                                "--json", "number,author,isDraft", "--limit", "100"]).stdout or "[]")
     log = load_copycat_log()
@@ -163,9 +228,9 @@ def main():
     earlier_nums = sorted(p["number"] for p in open_prs if p["number"] < pr_num and not p["isDraft"])
     print(f"  {len(earlier_nums)} earlier open non-draft PRs to check")
 
-    # 4) For each earlier PR touching shared files, fingerprint it. If >=70% containment
-    #    -> graduated response: >=80% = instant block; 70-79% = warning (block on 2nd strike).
     original = None; orig_author = None; best_containment = 0.0
+    best_lev = 0.0; best_cos = 0.0; structural_fired = False
+
     for e_num in earlier_nums:
         e_author = next((p["author"]["login"] for p in open_prs if p["number"] == e_num), "")
         if not e_author or e_author == author: continue
@@ -178,53 +243,47 @@ def main():
             original = e_num; orig_author = e_author; best_containment = c
         if c >= COPYCAT_CONTAINMENT:
             break
+        if c >= STRUCT_MIN and c < COPYCAT_WARN and not structural_fired:
+            lev, cos, hit = structural_similarity(REPO, pr_num, e_num, c)
+            if hit:
+                structural_fired = True; best_lev = lev; best_cos = cos
+                if not original or best_containment < COPYCAT_WARN:
+                    original = e_num; orig_author = e_author; best_containment = c
+                print(f"  structural copycat: lev={lev:.2f} cos={cos:.2f} c={c:.2f} vs #{e_num}")
 
-    if original is None or best_containment < COPYCAT_WARN:
-        print(f"  no copycat detected — clean"); return
+    if original is None or (best_containment < COPYCAT_WARN and not structural_fired):
+        print("  no copycat detected — clean"); return
 
-    # 5) Graduated response: ≥80% immediate block; 70-79% warning (block on 2nd strike)
     is_block = (best_containment >= COPYCAT_CONTAINMENT)
-    warn_strikes = sum(1 for e in log if e.get("author") == author and not e.get("blocked", True))
-    strike_count = warn_strikes + 1
+    if structural_fired and not is_block:
+        best_containment = max(best_containment, COPYCAT_WARN)
+        print(f"  bumping to WARN: structural lev={best_lev:.2f} cos={best_cos:.2f}")
 
     if is_block:
-        print(f"  COPYCAT (≥80%): #{pr_num} is {best_containment:.1%} contained in #{original} by {orig_author}")
+        print(f"  COPYCAT ≥80%: #{pr_num} is {best_containment:.1%} contained in #{original} by {orig_author}")
         flag_copycat(REPO, pr_num, original, author)
         log.append({"pr": pr_num, "author": author, "original": original,
                     "date": date.today().isoformat(), "blocked": True})
         save_copycat_log(log)
-        block_account(author, f"Auto-blocked: #{pr_num} is a copycat of #{original} "
-                              f"(containment {best_containment:.0%}). "
-                              f"Opened by {author}, copying {orig_author}'s unmerged work.")
-        closed = close_blocked_pr(REPO, pr_num, {author})
-        print(f"  copycat #{pr_num} flagged + blocked + closed={closed}")
+        block_account(author, f"#{pr_num} ≥80% copycat of #{original} ({best_containment:.0%})")
+        close_blocked_pr(REPO, pr_num, {author})
+        print("  block + close done")
     else:
-        print(f"  COPYCAT WARNING (70-79%): #{pr_num} is {best_containment:.1%} contained in #{original} by {orig_author} (strike {strike_count}/{MAX_WARNINGS})")
-        will_block = warn_copycat(REPO, pr_num, original, author, strike_count, best_containment)
+        warn_strikes = sum(1 for e in log if e.get("author") == author and not e.get("blocked", True))
+        strike = warn_strikes + 1
+        tag = "structural" if structural_fired else "containment"
+        print(f"  COPYCAT WARN ({tag}): #{pr_num} vs #{original} (strike {strike}/{MAX_WARNINGS})")
+        will_block = warn_copycat(REPO, pr_num, original, author, strike, best_containment, structural_fired)
         log.append({"pr": pr_num, "author": author, "original": original,
                     "date": date.today().isoformat(), "blocked": False,
-                    "penalty_days": 0, "strike": strike_count,
+                    "penalty_days": 0, "strike": strike,
                     "containment": round(best_containment, 3)})
         save_copycat_log(log)
         if will_block:
-            block_account(author, f"Auto-blocked after {strike_count} copycat warnings "
-                                  f"(latest: #{pr_num}, {best_containment:.0%} contained in #{original} "
-                                  f"by {orig_author}). Two-strike rule.")
-            # close after denylisting
+            block_account(author, f"2nd copycat strike: #{pr_num} ({best_containment:.0%} of #{original})")
             close_blocked_pr(REPO, pr_num, {author})
 
-    # Push the updated github-policy files so the bot's run stays in sync
-    subprocess.run(["git", "-C", str(ROOT), "add",
-                    ".github/copycats.json", ".github/blocked-contributors.txt", ".github/FLAGGED.md"],
-                   capture_output=True)
-    if subprocess.run(["git", "-C", str(ROOT), "diff", "--cached", "--quiet"]).returncode != 0:
-        subprocess.run(["git", "-C", str(ROOT), "commit", "-q",
-                        "-m", f"copycat-guard: #{pr_num} flagged by {author}"],
-                       capture_output=True)
-        subprocess.run(["git", "-C", str(ROOT), "pull", "-q", "--rebase", "origin", "main"],
-                       capture_output=True)
-        subprocess.run(["git", "-C", str(ROOT), "push", "-q", "origin", "main"], capture_output=True)
-        print("  policy files pushed")
+    push_policy_files()
 
 
 if __name__ == "__main__":
