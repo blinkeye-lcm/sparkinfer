@@ -120,7 +120,8 @@ def structural_similarity(repo, copy_num, orig_num, containment_pct):
 
 def split_into_blocks(repo, num):
     """Split a PR's added lines into logical CUDA code blocks (kernel functions, device
-    functions, and other named scopes). Each block is a (signature, body) pair."""
+    functions, and other named scopes). Filters out trivial if/else conditionals that
+    happen to match across PRs but aren't actual functions (minimum 10 tokens)."""
     diff = gh(["pr", "diff", str(num), "-R", repo]).stdout or ""
     blocks = []
     current_sig = None; current_body = []
@@ -130,20 +131,28 @@ def split_into_blocks(repo, num):
         s = line[1:].strip()
         if not s or s.startswith(("//", "#", "/*", "*")):
             continue
-        # CUDA function boundaries: __global__, __device__, __host__, template<>, or a top-level
-        # function signature (return_type name( ... ) { ). Also catch if/for/while blocks that
-        # start new logical units (launch sites, conditionals).
-        is_func_start = any(kw in s for kw in (
+        # CUDA function boundaries ONLY — not flow control (if/for/while). Detection uses
+        # __global__/__device__/__host__/template or a return-type signature (void/float/etc name(...)).
+        is_cuda = any(kw in s for kw in (
             "__global__", "__device__", "__host__", "template <", "template<"))
-        if is_func_start or (s.endswith("{") and ("(" in s or "kernel" in s.lower())):
+        # Skip flow-control keywords — "if (", "for (", "while (", "else if" are NOT functions.
+        is_flow = any(s.strip().startswith(kw) for kw in (
+            "if ", "if(", "for ", "for(", "while ", "while(", "else ", "switch ", "switch(",
+            "} else ", "} else if"))
+        is_func_sig = not is_flow and s.endswith("{") and "(" in s
+        if is_cuda or is_func_sig:
             if current_sig and current_body:
-                blocks.append((current_sig, "\n".join(current_body)))
+                tokens = [t for l in current_body for t in l.split() if len(t)>1]
+                if len(tokens) >= 10:
+                    blocks.append((current_sig, "\n".join(current_body)))
             current_sig = s
             current_body = []
         elif current_sig is not None:
             current_body.append(line[1:])
     if current_sig and current_body:
-        blocks.append((current_sig, "\n".join(current_body)))
+        tokens = [t for l in current_body for t in l.split() if len(t)>1]
+        if len(tokens) >= 10:
+            blocks.append((current_sig, "\n".join(current_body)))
     return blocks
 
 
