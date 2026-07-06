@@ -137,6 +137,51 @@
   ],
   "prs": [
     {
+      "num": 240,
+      "title": "perf(qwen3.6): fast Gated-DeltaNet AR kernel + conv/L2-norm and shared-expert GEMV fusions",
+      "areas": [
+        "kernels",
+        "runtime"
+      ],
+      "label": "none",
+      "tps": 258.35,
+      "delta_pct": 1.4,
+      "top1": 0.9795,
+      "kl": 0.0172,
+      "url": "https://github.com/gittensor-ai-lab/sparkinfer/pull/240",
+      "model": "Qwen3.6-35B-A3B",
+      "eval_mode": "longctx",
+      "score_context": 128,
+      "best_context_label": "128-context",
+      "context_gains_pct": {
+        "128-context": 1.43,
+        "512-context": 1.32,
+        "4k-context": 1.18
+      },
+      "regression_labels": [],
+      "ctx_128_tps": 258.35,
+      "ctx_512_tps": 255.2,
+      "ctx_4096_tps": 241.82,
+      "ctx_16384_tps": 0.0,
+      "ctx_32768_tps": 0.0,
+      "guard_128_baseline": 254.72,
+      "guard_128_ratio": 1.0143,
+      "guard_128_pass": true,
+      "guard_512_baseline": 251.87,
+      "guard_512_ratio": 1.0132,
+      "guard_512_pass": true,
+      "guard_4k_baseline": 239.0,
+      "guard_4k_ratio": 1.0118,
+      "guard_4k_pass": true,
+      "guard_16k_baseline": 0.0,
+      "guard_16k_ratio": 0.0,
+      "guard_16k_pass": true,
+      "guard_32k_baseline": 0.0,
+      "guard_32k_ratio": 0.0,
+      "guard_32k_pass": true,
+      "proof_url": "https://gittensor-ai-lab.github.io/sparkinfer-log/?run=0240-feb32e2"
+    },
+    {
       "num": 264,
       "title": "perf(qwen3.6): GDN state-update warp-per-column + overlap",
       "areas": [
@@ -187,21 +232,6 @@
       "delta_pct": 22.3,
       "url": "https://github.com/gittensor-ai-lab/sparkinfer/pull/233",
       "proof_url": "https://gittensor-ai-lab.github.io/sparkinfer-log/?run=0233-1cb0054"
-    },
-    {
-      "num": 240,
-      "title": "perf(qwen3.6): fast Gated-DeltaNet AR kernel + conv/L2-norm and shared-expert GEMV fusions",
-      "areas": [
-        "kernels",
-        "runtime"
-      ],
-      "label": "XS",
-      "tps": 230.33,
-      "delta_pct": 3.4,
-      "top1": 0.96,
-      "kl": 0.0268,
-      "url": "https://github.com/gittensor-ai-lab/sparkinfer/pull/240",
-      "proof_url": "https://gittensor-ai-lab.github.io/sparkinfer-log/?run=0240-d888f45"
     },
     {
       "num": 243,
