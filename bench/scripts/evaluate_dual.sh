@@ -77,16 +77,40 @@ run_model() {  # $1=role  $2=file $3=repo $4=tok  $5=frontier  $6..=SPARKINFER_*
 # distance), mirroring the single-model eval. The guard is never scored, so no boost there.
 P_DIFF_REF="${SPARKINFER_P_LLAMA_128_BASELINE:-0}"
 
-# Qwen3.6 is scored on 128/512/4k ONLY for now — long-context is too slow to sweep every eval.
-# The 3 live contexts get 3-rep medians. Re-enable 16k/32k by passing their reps + baselines.
+# When the Qwen3.6 guard baselines aren't pre-set (bot passes 0), measure Qwen3.6 main
+# speed directly on the box — a quick 3-context decode sweep against the already-built
+# origin/main. This auto-calibrates every bot run so the scoring base never goes stale.
+if [ "${SPARKINFER_P_GUARD_128_BASELINE:-0}" = "0" ]; then
+  echo ">> measuring Qwen3.6 same-box main baseline (3-context sweep) ..." >&2
+  P36_GGUF="${P_DIR}/${P_FILE}"
+  [ -f "$P36_GGUF" ] || P36_GGUF="${MODELS_DIR:-$ROOT/models}/${P_FILE}"
+  for ctx in 0 512 4096; do
+    t="$(si_run qwen3_gguf_bench "$P36_GGUF" 128 "$ctx" 2>/dev/null | \
+         sed -n 's/.*decode tg *: *\([0-9.][0-9.]*\).*/\1/p' | tail -1)"
+    case "$ctx" in
+      0)    P36_128="${t:-0}" ;;
+      512)  P36_512="${t:-0}" ;;
+      4096) P36_4K="${t:-0}" ;;
+    esac
+  done
+  echo ">> Qwen3.6 same-box main: 128=${P36_128} 512=${P36_512} 4k=${P36_4K} tok/s" >&2
+fi
+P36_128="${P36_128:-0}"
+P36_512="${P36_512:-0}"
+P36_4K="${P36_4K:-0}"
+# Fall back to the bot's config defaults if measurement produced 0
+P36_128="${P36_128:-${SPARKINFER_P_GUARD_128_BASELINE:-300.16}}"
+P36_512="${P36_512:-${SPARKINFER_P_GUARD_512_BASELINE:-296.76}}"
+P36_4K="${P36_4K:-${SPARKINFER_P_GUARD_4K_BASELINE:-287.91}}"
+
 PRIMARY_JSON="$(run_model primary "$P_FILE" "$P_REPO" "$P_TOK" 0 \
   MODELS_DIR="$P_DIR" MODEL_SHA256="${QWEN36_MODEL_SHA256:-}" \
   SPARKINFER_SCORE_REPS=0 SPARKINFER_GUARD_32K_REPS=0 \
   SPARKINFER_GUARD_REPS=3 SPARKINFER_GUARD_512_REPS=3 SPARKINFER_GUARD_4K_REPS=3 \
   SPARKINFER_DIFFICULTY_BOOST=1 SPARKINFER_DIFFICULTY_REF="${P_DIFF_REF:-365.85}" \
-  SPARKINFER_GUARD_128_BASELINE="${SPARKINFER_P_GUARD_128_BASELINE:-0}" \
-  SPARKINFER_GUARD_512_BASELINE="${SPARKINFER_P_GUARD_512_BASELINE:-0}" \
-  SPARKINFER_GUARD_4K_BASELINE="${SPARKINFER_P_GUARD_4K_BASELINE:-0}" \
+  SPARKINFER_GUARD_128_BASELINE="${P36_128}" \
+  SPARKINFER_GUARD_512_BASELINE="${P36_512}" \
+  SPARKINFER_GUARD_4K_BASELINE="${P36_4K}" \
   SPARKINFER_GUARD_16K_BASELINE=0 \
   SPARKINFER_GUARD_32K_BASELINE=0 \
   SPARKINFER_LLAMA_128_BASELINE="${SPARKINFER_P_LLAMA_128_BASELINE:-0}" \

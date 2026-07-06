@@ -1033,9 +1033,9 @@ def main():
             # Scoring base = same-box origin/main baseline (the guard baselines), not a passed-in frontier.
             cmd[cmd.index("--keep"):cmd.index("--keep")] = [
                 "--dual",
-                "--p-guard-128-baseline", str(QWEN36_BASE["128"]),
-                "--p-guard-512-baseline", str(QWEN36_BASE["512"]),
-                "--p-guard-4k-baseline",  str(QWEN36_BASE["4k"]),
+                "--p-guard-128-baseline", "0",
+                "--p-guard-512-baseline", "0",
+                "--p-guard-4k-baseline",  "0",
                 "--p-llama-128-baseline", str(QWEN36_BASE["llama128"]),
                 "--p-llama-512-baseline", str(QWEN36_BASE["llama512"]),
                 "--p-llama-4k-baseline",  str(QWEN36_BASE["llama4k"])]
