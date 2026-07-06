@@ -137,6 +137,51 @@
   ],
   "prs": [
     {
+      "num": 266,
+      "title": "perf(qwen36): +15-20% decode — Q8 shared MMVQ, pipelining, F=512 MoE, hd256 FA",
+      "areas": [
+        "kernels",
+        "runtime"
+      ],
+      "label": "L",
+      "tps": 287.91,
+      "delta_pct": 20.5,
+      "top1": 0.9786,
+      "kl": 0.017,
+      "url": "https://github.com/gittensor-ai-lab/sparkinfer/pull/266",
+      "model": "Qwen3.6-35B-A3B",
+      "eval_mode": "longctx",
+      "score_context": 4096,
+      "best_context_label": "4k-context",
+      "context_gains_pct": {
+        "128-context": 17.84,
+        "512-context": 17.82,
+        "4k-context": 20.46
+      },
+      "regression_labels": [],
+      "ctx_128_tps": 300.16,
+      "ctx_512_tps": 296.76,
+      "ctx_4096_tps": 287.91,
+      "ctx_16384_tps": 0.0,
+      "ctx_32768_tps": 0.0,
+      "guard_128_baseline": 254.72,
+      "guard_128_ratio": 1.1784,
+      "guard_128_pass": true,
+      "guard_512_baseline": 251.87,
+      "guard_512_ratio": 1.1782,
+      "guard_512_pass": true,
+      "guard_4k_baseline": 239.0,
+      "guard_4k_ratio": 1.2046,
+      "guard_4k_pass": true,
+      "guard_16k_baseline": 0.0,
+      "guard_16k_ratio": 0.0,
+      "guard_16k_pass": true,
+      "guard_32k_baseline": 0.0,
+      "guard_32k_ratio": 0.0,
+      "guard_32k_pass": true,
+      "proof_url": "https://gittensor-ai-lab.github.io/sparkinfer-log/?run=0266-c127774"
+    },
+    {
       "num": 239,
       "title": "perf(qwen3.6): fuse decode kernel launches — shared-expert + GDN conv/L2-norm",
       "areas": [
@@ -1291,18 +1336,6 @@
       "top1": 0.97,
       "kl": 0.1507,
       "url": "https://github.com/gittensor-ai-lab/sparkinfer/pull/71"
-    },
-    {
-      "num": 70,
-      "title": "int8 mmvq for the last fp32-path GEMVs: attn-V + LM head (Q6_K) + gate/up (Q4_K) (+4.3%)",
-      "areas": [
-        "kernels",
-        "runtime"
-      ],
-      "label": "S",
-      "tps": 313.14,
-      "delta_pct": 5.3,
-      "url": "https://github.com/gittensor-ai-lab/sparkinfer/pull/70"
     }
   ],
   "landed": [
