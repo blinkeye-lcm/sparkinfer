@@ -83,7 +83,9 @@ P_DIFF_REF="${SPARKINFER_P_LLAMA_128_BASELINE:-0}"
 if [ "${SPARKINFER_P_GUARD_128_BASELINE:-0}" = "0" ]; then
   echo ">> measuring Qwen3.6 same-box main baseline (3-context sweep) ..." >&2
   P36_GGUF="${P_DIR}/${P_FILE}"
+  SI_BIN="$ROOT/build/runtime"   # ensure si_run finds the already-built binaries
   [ -f "$P36_GGUF" ] || P36_GGUF="${MODELS_DIR:-$ROOT/models}/${P_FILE}"
+  SI_BIN="$ROOT/build/runtime"   # ensure si_run finds the already-built binaries
   for ctx in 0 512 4096; do
     t="$(si_run qwen3_gguf_bench "$P36_GGUF" 128 "$ctx" 2>/dev/null | \
          sed -n 's/.*decode tg *: *\([0-9.][0-9.]*\).*/\1/p' | tail -1)"
