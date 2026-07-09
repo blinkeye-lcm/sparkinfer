@@ -1,12 +1,11 @@
 name: copycat-guard
 # Real-time copycat detection — fires the instant a PR is opened (pull_request_target
 # runs from the BASE branch context, so it has full repo access to read all PRs, label,
-# comment, and close). Four-layer detection:
-#   L1: containment >=80% -> block+close (zero tolerance)
-#   L2: containment 70-79% -> copycat-warn + comment
-#   L3: containment 40-69% + Levenshtein>=0.70 + bigram_cosine>=0.60 -> bump to WARN
-#   L4: per-function containment 30-79% + LLM judge (gpt-4o-mini) -> bump to WARN
-#   2nd warning strike (any layer) -> block+close
+# comment, and close). Tiered detection (eval/copycat_policy.py):
+#   ≥85% containment -> block+close
+#   75-84% containment -> copycat-warn + comment
+#   ≥92% per-function containment -> copycat-warn (dilution evasion)
+#   3 warnings -> block+close
 
 on:
   pull_request_target:

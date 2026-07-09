@@ -88,7 +88,7 @@ REGRESSION_LABELS  = {"regression-128", "regression-512", "regression-4k", "regr
 # changed paths, and branch protection (gh refuses if checks/reviews aren't satisfied).
 AUTO_MERGE_FIRST = os.environ.get("SPARKINFER_AUTOMERGE", "0") == "1"
 # Auto-merge is BLOCKED if the PR carries any of these labels:
-AUTOMERGE_BLOCK_LABELS = {"copycat", "flagged:gaming", "penalty", "needs-benchmark", "not-tested",
+AUTOMERGE_BLOCK_LABELS = {"copycat", "copycat-warn", "flagged:gaming", "penalty", "needs-benchmark", "not-tested",
                           NEEDS_REBASE_LABEL, REEVALUATE_LABEL, HOLD_LABEL, *REGRESSION_LABELS}
 # ...or touches any maintainer-owned / governance path (contributor speedups live in kernels|runtime|moe):
 AUTOMERGE_SENSITIVE = ("eval/", "bench/scripts/", ".gittensor/", ".github/", "dashboard/", "CODEOWNERS")
@@ -149,17 +149,18 @@ def block_account(login, reason):
         f.write(f"\n## {datetime.date.today().isoformat()} — `{login}` (auto-blocked)\n\n{reason}\n")
 
 # ---- copycat detection (a later PR that re-submits an earlier PR's diff) ----
-# A PR is a copycat if its added lines are largely contained in an EARLIER PR touching the same
-# file(s). Copycats are labeled `copycat`, commented (citing the original), and NOT evaluated.
-# Logged to .github/copycats.json; ANY copycat immediately blocks the author and closes the PR
-# (zero tolerance — no penalty period, no strike threshold).
+# Tiered policy (shared with eval/copycat_policy.py + copycat_guard.py):
+#   ≥85% containment → block + close; 75–84% → copycat-warn; 3 warns → block.
+from copycat_policy import COPYCAT_BLOCK, COPYCAT_WARN, MAX_WARNINGS, skip_copycat_scoring
+from copycat_guard import warn_copycat
+
 FLAG_FILE = os.path.join(ROOT, ".github", "FLAGGED.md")
 COPYCAT_LABEL = "copycat"
+COPYCAT_WARN_LABEL = "copycat-warn"
 COPYCAT_LOG = os.path.join(ROOT, ".github", "copycats.json")
-COPYCAT_CONTAINMENT = 0.80   # ≥80% of the copy's added lines also appear in the original
-COPYCAT_STRIKES = 1          # zero tolerance: the FIRST copycat denylists the author + closes the PR
-PENALTY_DAYS = 5             # (legacy; copycats now block immediately, so no penalty period applies)
-PENALTY_LABEL = "penalty"    # applied to a penalized author's PRs instead of greenlighting them
+COPYCAT_CONTAINMENT = COPYCAT_BLOCK   # back-compat alias
+PENALTY_DAYS = 5             # legacy penalty window for old log entries
+PENALTY_LABEL = "penalty"
 
 def author_penalty_until(author):
     """If `author` has an active copycat strike, return the date the penalty lifts, else None.
@@ -217,10 +218,10 @@ def push_github_state(msg):
 def flag_copycat(repo, num, original, author):
     add_label(repo, num, COPYCAT_LABEL)
     body = (f"<!-- sparkinfer-copycat -->\n## 🐈 Flagged: copycat\n\n"
-            f"This PR re-submits substantially the same diff as the earlier #{original}. "
-            f"Duplicating another contributor's work is treated as gaming the SN74 emission "
-            f"mechanism. The account has been **blocked** and this PR **closed** — zero tolerance, "
-            f"no warning. See [`.github/COPYCATS.md`](../blob/main/.github/COPYCATS.md).")
+            f"This PR re-submits substantially the same diff (≥85% line overlap) as the earlier "
+            f"#{original}. Duplicating another contributor's work is treated as gaming the SN74 "
+            f"emission mechanism. The account has been **blocked** and this PR **closed**.\n\n"
+            f"See [`.github/COPYCATS.md`](../blob/main/.github/COPYCATS.md).")
     gh(["pr", "comment", str(num), "-R", repo, "--body", body])
 
 def evaluated_commits(repo, num):
@@ -908,25 +909,32 @@ def main():
     logged_copycats = {e["pr"] for e in copy_log}
     state_changed = False
 
-    def find_original(num):
-        """Earliest PR by a DIFFERENT author (shared file) whose added lines contain this PR's diff.
-        Self-resubmissions (same author iterating on their own earlier PR) are NOT copycats."""
+    def find_copycat_match(num):
+        """Best earlier different-author match with containment >= COPYCAT_WARN, else None."""
         files, added = fps.get(num, (set(), set()))
-        if not added: return None
+        if not added:
+            return None, 0.0
         me = pr_author.get(num, "?")
+        best_orig = None
+        best_c = 0.0
         for earlier in all_nums:
-            if earlier >= num: break
+            if earlier >= num:
+                break
             ea_login = pr_author.get(earlier, "?")
-            if ea_login == me: continue                      # ignore one's own earlier PRs
-            # A blocked copier's PR (or one already adjudicated as a copy) must NOT be usable as the
-            # "original": otherwise a copier can front-run the real author by opening an earlier-numbered
-            # PR (even an empty placeholder later force-pushed), get flagged, yet still frame the author.
-            if ea_login.lower() in denylist: continue
-            if earlier in logged_copycats: continue
+            if ea_login == me:
+                continue
+            if ea_login.lower() in denylist:
+                continue
+            if earlier in logged_copycats:
+                continue
             ef, ea = fps.get(earlier, (set(), set()))
-            if (files & ef) and containment(added, ea) >= COPYCAT_CONTAINMENT:
-                return earlier
-        return None
+            if not (files & ef):
+                continue
+            c = containment(added, ea)
+            if c >= COPYCAT_WARN and c > best_c:
+                best_c = c
+                best_orig = earlier
+        return best_orig, best_c
 
     # Collect PRs that actually need evaluation before starting the GPU instance.
     denylist = load_denylist()
@@ -945,26 +953,41 @@ def main():
             print(f"PR #{num}: BLOCKED (denylisted: {', '.join(sorted(hits))}) — flag + close, no eval")
             if not args.dry_run: close_blocked_pr(args.repo, num, hits)
             continue
-        # Gate 2 — copycat: re-submits a DIFFERENT author's earlier diff. Zero tolerance — flag,
-        # block the author, and close the PR immediately (no eval, no penalty, no strike threshold).
-        # (Self-resubmissions are excluded by find_original.)
-        original = find_original(num)
+        # Gate 2 — copycat: tiered containment vs earlier PRs (open/closed/merged).
+        original, copy_c = find_copycat_match(num)
         if original is not None:
             author = pr_author.get(num, "?")
-            print(f"PR #{num}: COPYCAT of #{original} by {pr_author.get(original,'?')} "
-                  f"(author {author}) — flag, no eval")
-            if not args.dry_run and num not in logged_copycats:
-                flag_copycat(args.repo, num, original, author)
-                copy_log.append({"pr": num, "author": author, "original": original,
-                                 "date": datetime.date.today().isoformat()})
-                logged_copycats.add(num); state_changed = True
-                strikes = sum(1 for e in copy_log if e["author"] == author)
-                if strikes >= COPYCAT_STRIKES and author.lower() not in load_denylist():
-                    print(f"  -> {author} hit {strikes} copycats — auto-blocking")
-                    block_account(author, f"Auto-blocked after {strikes} copycat PRs "
-                                  f"(#{', #'.join(str(e['pr']) for e in copy_log if e['author']==author)}).")
-                    close_blocked_pr(args.repo, num, {author})
-            continue
+            _, added = fps.get(num, (set(), set()))
+            if skip_copycat_scoring(added, copy_c):
+                print(f"PR #{num}: copycat-like #{original} at {copy_c:.0%} but too few added lines — allow eval")
+            elif copy_c >= COPYCAT_BLOCK:
+                print(f"PR #{num}: COPYCAT ≥85% of #{original} by {pr_author.get(original,'?')} "
+                      f"(author {author}) — block, no eval")
+                if not args.dry_run and num not in logged_copycats:
+                    flag_copycat(args.repo, num, original, author)
+                    copy_log.append({"pr": num, "author": author, "original": original,
+                                     "date": datetime.date.today().isoformat(), "blocked": True})
+                    logged_copycats.add(num); state_changed = True
+                    if author.lower() not in load_denylist():
+                        block_account(author, f"#{num} ≥85% copycat of #{original} ({copy_c:.0%})")
+                        close_blocked_pr(args.repo, num, {author})
+                continue
+            else:
+                print(f"PR #{num}: COPYCAT WARN {copy_c:.0%} of #{original} by {pr_author.get(original,'?')} "
+                      f"(author {author}) — warn, skip eval")
+                if not args.dry_run and num not in logged_copycats:
+                    warn_strikes = sum(1 for e in copy_log
+                                       if e.get("author") == author and not e.get("blocked", True))
+                    strike = warn_strikes + 1
+                    will_block = warn_copycat(args.repo, num, original, author, strike, copy_c)
+                    copy_log.append({"pr": num, "author": author, "original": original,
+                                     "date": datetime.date.today().isoformat(), "blocked": False,
+                                     "strike": strike, "containment": round(copy_c, 3)})
+                    logged_copycats.add(num); state_changed = True
+                    if will_block and author.lower() not in load_denylist():
+                        block_account(author, f"{MAX_WARNINGS} copycat strikes: #{num} (vs #{original})")
+                        close_blocked_pr(args.repo, num, {author})
+                continue
         areas = areas_for_pr(args.repo, num)
         print(f"PR #{num} @ {oid}: areas={sorted(areas) or ['(none)']} ref={ref}")
         if not args.dry_run: apply_area_labels(args.repo, num, areas)

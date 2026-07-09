@@ -3,17 +3,25 @@
 
 Multi-layer copycat detection, fires the instant a PR is opened:
 
-  LAYER 1 (containment): ≥80% → instant block + close (zero tolerance)
-  LAYER 2 (containment): 70–79% → copycat-warn label + warning comment
-  LAYER 3 (structural) : 40–69% with lev≥0.70+cos≥0.60 → bump to WARN
-  2 warning strikes (any layer) → block + close (just like ≥80%)
+  LAYER 1 (containment): ≥85% → block + close
+  LAYER 2 (containment): 75–84% → copycat-warn label + warning comment
+  LAYER 4 (per-function) : ≥92% single-function containment → warn (dilution evasion)
+  3 warning strikes (any layer) → block + close
 
-Self-resubmissions (same author iterating on own earlier PR) are excluded.
+Structural similarity and LLM auto-warn are disabled (too many FPs on independent
+contributors landing similar optimizations). Self-resubmissions are excluded.
+
 Invoked by .github/workflows/copycat-guard.yml via:  PR_NUM=<num> python3 eval/copycat_guard.py
 """
 import json, os, subprocess, sys
 from datetime import date
 from pathlib import Path
+
+from copycat_policy import (
+    COPYCAT_BLOCK, COPYCAT_WARN, COPYCAT_CONTAINMENT, MAX_WARNINGS,
+    MIN_ADDED_LINES, LITERAL_BLOCK, FUNC_BLOCK_WARN,
+    STRUCTURAL_ENABLED, LLM_ENABLED, skip_copycat_scoring,
+)
 
 REPO = os.environ.get("EVAL_REPO", "gittensor-ai-lab/sparkinfer")
 ROOT = Path(__file__).resolve().parents[1]
@@ -22,18 +30,21 @@ DENYLIST_FILE = ROOT / ".github" / "blocked-contributors.txt"
 FLAG_FILE = ROOT / ".github" / "FLAGGED.md"
 FLAG_LABEL = "flagged:gaming"
 
-# Detection thresholds
-COPYCAT_CONTAINMENT = 0.80   # layer 1: ≥80% → instant block + close
-COPYCAT_WARN         = 0.70   # layer 2: 70–79% → warning
-MAX_WARNINGS         = 2      # block on this many warnings across any PRs
-LEV_THRESH           = 0.70   # layer 3: token Levenshtein ratio ≥ this
-BIGRAM_COSINE_THRESH = 0.60   # layer 3: bigram cosine similarity ≥ this
-STRUCT_MIN            = 0.40   # layer 3: containment must be at least this to trigger
-# Layer 4: LLM judge — catches per-function copycats diluted by larger PR
-LLM_FUNC_MIN          = 0.30   # per-function containment must be ≥30% to escalate
-LLM_CONFIDENCE_MIN    = 0.70   # LLM must be ≥70% confident to flag
-LLM_BODY_MAX_CHARS    = 2000   # trim function bodies to keep token cost low
+# Layer 3 legacy constants (only used when STRUCTURAL_ENABLED)
+LEV_THRESH           = 0.70
+BIGRAM_COSINE_THRESH = 0.60
+STRUCT_MIN            = 0.40
+
+# Layer 4 LLM (off by default; set COPYCAT_LLM_ENABLED=1 to re-enable)
+LLM_FUNC_MIN          = 0.60
+LLM_CONFIDENCE_MIN    = 0.85
+LLM_BODY_MAX_CHARS    = 2000
 LLM_MAX_TOKENS        = 150
+
+def _llm_enabled():
+    if os.environ.get("COPYCAT_LLM_ENABLED", "").strip().lower() in ("1", "true", "yes"):
+        return True
+    return LLM_ENABLED
 
 # Provider defaults (override via COPYCAT_LLM_PROVIDER / COPYCAT_LLM_MODEL env):
 #   openai   → gpt-4o-mini (default — cheap, stdlib-only, works in GHA)
@@ -359,26 +370,26 @@ def push_policy_files():
 # ---- PR actions ----
 
 def flag_copycat(repo, num, original, author):
-    """Layer 1: ≥80% containment → block + close."""
+    """Layer 1: ≥85% containment → block + close."""
     subprocess.run(["gh", "pr", "edit", str(num), "-R", repo, "--add-label", "copycat"], capture_output=True)
     body = (f"<!-- sparkinfer-copycat -->\n## 🐈 Flagged: copycat (real-time guard)\n\n"
-            f"This PR re-submits substantially the same diff as the earlier #{original} by "
-            f"a different author. Duplicating another contributor's work is treated as gaming "
-            f"the SN74 emission mechanism. The account has been **blocked** and this PR "
-            f"**closed** — zero tolerance, no warning.\n\n"
+            f"This PR re-submits substantially the same diff (≥85% line overlap) as the earlier "
+            f"#{original} by a different author. Duplicating another contributor's work is treated "
+            f"as gaming the SN74 emission mechanism. The account has been **blocked** and this PR "
+            f"**closed**.\n\n"
             f"See [`.github/COPYCATS.md`](../blob/main/.github/COPYCATS.md).")
     subprocess.run(["gh", "pr", "comment", str(num), "-R", repo, "--body", body], capture_output=True)
 
 
 def warn_copycat(repo, num, original, author, strike_count, containment_pct, structural=False, llm_conf=0.0):
-    """Layer 2/3/4: 70–79%, structural flip, or LLM verdict → warning. Block on 2nd strike."""
+    """Layer 2/4: 75–84%, per-function, or LLM verdict → warning. Block on 3rd strike."""
     subprocess.run(["gh", "pr", "edit", str(num), "-R", repo, "--add-label", "copycat-warn"], capture_output=True)
     will_block = bool(strike_count >= MAX_WARNINGS)
     if llm_conf > 0:
         head = (f"AI semantic analysis identified a function in this PR as "
                 f"substantially copied from #{original} (confidence {llm_conf:.0%}). "
                 f"Combined per-function containment: {containment_pct:.0%}.")
-    elif structural and containment_pct >= COPYCAT_WARN:
+    elif structural and containment_pct >= FUNC_BLOCK_WARN:
         head = (f"A specific function in this PR ({containment_pct:.0%} per-function containment) "
                 f"is substantially contained in #{original} by a different author — the PR-level "
                 f"containment is low because the copied function is embedded inside a larger diff.")
@@ -388,12 +399,13 @@ def warn_copycat(repo, num, original, author, strike_count, containment_pct, str
     else:
         head = f"**{containment_pct:.0f}% containment** in the earlier #{original}"
     if will_block:
-        tail = ("\n\nThis is the **second** copycat-like submission — the account is now "
+        tail = (f"\n\nThis is the **{MAX_WARNINGS}rd** copycat-like submission — the account is now "
                 "**blocked** and the PR closed.")
     else:
-        tail = (f"\n\n⚠️ Warning (strike {strike_count}/{MAX_WARNINGS}). A second copycat-like "
-                "submission will result in an automatic block. If this is a legitimate independent "
-                "implementation, comment on this PR and a maintainer will review.")
+        tail = (f"\n\n⚠️ Warning (strike {strike_count}/{MAX_WARNINGS}). "
+                f"{MAX_WARNINGS} copycat-like submissions will result in an automatic block. "
+                "If this is a legitimate independent implementation, comment on this PR and a "
+                "maintainer will review (label `copycat-cleared` removes the strike).")
     body = (f"<!-- sparkinfer-copycat-warn -->\n## 🐈 Copycat warning (real-time guard)\n\n"
             f"{head} by a different author.{tail}")
     subprocess.run(["gh", "pr", "comment", str(num), "-R", repo, "--body", body], capture_output=True)
@@ -435,18 +447,23 @@ def main():
     if not added:
         print("  no added lines to scan — not a copycat"); return
 
-    open_prs = json.loads(gh(["pr", "list", "-R", REPO, "--state", "open",
-                               "--json", "number,author,isDraft", "--limit", "100"]).stdout or "[]")
+    open_prs = json.loads(gh(["pr", "list", "-R", REPO, "--state", "all",
+                               "--json", "number,author,isDraft,state", "--limit", "300"]).stdout or "[]")
     log = load_copycat_log()
-    blocked_prs = {e["pr"] for e in log}
-    earlier_nums = sorted(p["number"] for p in open_prs if p["number"] < pr_num and not p["isDraft"])
-    print(f"  {len(earlier_nums)} earlier open non-draft PRs to check")
+    blocked_prs = {e["pr"] for e in log if e.get("blocked", True)}
+    pr_author = {p["number"]: p["author"]["login"] for p in open_prs}
+    earlier_nums = sorted(
+        p["number"] for p in open_prs
+        if p["number"] < pr_num and not p.get("isDraft")
+        and p.get("state") in ("OPEN", "MERGED")
+    )
+    print(f"  {len(earlier_nums)} earlier open/merged non-draft PRs to check")
 
     original = None; orig_author = None; best_containment = 0.0
     best_lev = 0.0; best_cos = 0.0; structural_fired = False
 
     for e_num in earlier_nums:
-        e_author = next((p["author"]["login"] for p in open_prs if p["number"] == e_num), "")
+        e_author = pr_author.get(e_num, "")
         if not e_author or e_author == author: continue
         if e_author.lower() in denylist: continue
         if e_num in blocked_prs: continue
@@ -455,9 +472,9 @@ def main():
         c = containment(added, ea)
         if c > best_containment:
             original = e_num; orig_author = e_author; best_containment = c
-        if c >= COPYCAT_CONTAINMENT:
+        if c >= COPYCAT_BLOCK:
             break
-        if c >= STRUCT_MIN and c < COPYCAT_WARN and not structural_fired:
+        if STRUCTURAL_ENABLED and c >= STRUCT_MIN and c < COPYCAT_WARN and not structural_fired:
             lev, cos, hit = structural_similarity(REPO, pr_num, e_num, c)
             if hit:
                 structural_fired = True; best_lev = lev; best_cos = cos
@@ -465,58 +482,55 @@ def main():
                     original = e_num; orig_author = e_author; best_containment = c
                 print(f"  structural copycat: lev={lev:.2f} cos={cos:.2f} c={c:.2f} vs #{e_num}")
 
-        # 4b) Layer 4: per-function containment + LLM judge. The copier's evasion tactic is to
-        #     embed a verbatim-copied kernel inside a much larger PR to dilute the PR-level ratio.
-        #     4b-i:  ANY single function >=70% contained → deterministic bump to WARN (no API).
-        #     4b-ii: 30-69% → escalate to LLM judge for semantic verification.
+        # Layer 4: per-function containment (near-verbatim kernel inside larger PR).
         if c < COPYCAT_WARN and not structural_fired:
             func_c, func_csig, func_osig = per_function_containment(REPO, pr_num, e_num)
-            if func_c >= COPYCAT_WARN:
-                # Deterministic: a single copied function is >=70% contained even though the PR
-                # as a whole appears different (dilution). Bump to WARN — same tier as layer 2,
-                # but the comment surfaces the function-level evidence.
-                structural_fired = True; best_lev = func_c; best_cos = -1.0  # cos=-1 = "func-level"
+            if func_c >= FUNC_BLOCK_WARN:
+                structural_fired = True; best_lev = func_c; best_cos = -1.0
                 best_containment = max(best_containment, func_c, COPYCAT_WARN)
-                if not original or func_c > (best_containment if original==e_num else 0):
+                if not original or func_c > (best_containment if original == e_num else 0):
                     original = e_num; orig_author = e_author
                 print(f"  per-function bump: {func_csig[:60]}... is {func_c:.0%} contained in #{e_num} -> WARN")
-            elif func_c >= LLM_FUNC_MIN:
-                print(f"  layer 4: per-function containment={func_c:.1%} (vs #{e_num}) -> escalating to LLM")
-                cb = next((b for s,b in split_into_blocks(REPO,pr_num) if s==func_csig), "")
-                ob = next((b for s,b in split_into_blocks(REPO,e_num) if s==func_osig), "")
+            elif _llm_enabled() and func_c >= LLM_FUNC_MIN:
+                print(f"  layer 4 LLM: per-function containment={func_c:.1%} (vs #{e_num})")
+                cb = next((b for s, b in split_into_blocks(REPO, pr_num) if s == func_csig), "")
+                ob = next((b for s, b in split_into_blocks(REPO, e_num) if s == func_osig), "")
                 is_copy, llm_conf, reason = llm_judge_copycat(cb, ob, func_csig, func_osig)
                 print(f"  LLM: copycat={is_copy} confidence={llm_conf:.2f} reason={reason[:120]}")
                 if is_copy and llm_conf >= LLM_CONFIDENCE_MIN:
                     structural_fired = True; best_lev = llm_conf; best_cos = 0.0
                     best_containment = max(best_containment, func_c, COPYCAT_WARN)
-                    if not original or func_c > (best_containment if original==e_num else 0):
+                    if not original or func_c > (best_containment if original == e_num else 0):
                         original = e_num; orig_author = e_author
                     print(f"  LLM verdict: COPYCAT CONFIRMED -> bumping to WARN vs #{e_num}")
 
     if original is None or (best_containment < COPYCAT_WARN and not structural_fired):
         print("  no copycat detected — clean"); return
 
-    is_block = (best_containment >= COPYCAT_CONTAINMENT)
+    if skip_copycat_scoring(added, best_containment):
+        print(f"  only {len(added)} added lines (<{MIN_ADDED_LINES}) and "
+              f"containment {best_containment:.0%} < {LITERAL_BLOCK:.0%} — skip"); return
+
+    is_block = (best_containment >= COPYCAT_BLOCK)
     if structural_fired and not is_block:
         best_containment = max(best_containment, COPYCAT_WARN)
-        print(f"  bumping to WARN: structural lev={best_lev:.2f} cos={best_cos:.2f}")
+        print(f"  bumping to WARN: lev/bump={best_lev:.2f}")
 
     if is_block:
-        print(f"  COPYCAT ≥80%: #{pr_num} is {best_containment:.1%} contained in #{original} by {orig_author}")
+        print(f"  COPYCAT ≥85%: #{pr_num} is {best_containment:.1%} contained in #{original} by {orig_author}")
         flag_copycat(REPO, pr_num, original, author)
         log.append({"pr": pr_num, "author": author, "original": original,
                     "date": date.today().isoformat(), "blocked": True})
         save_copycat_log(log)
-        block_account(author, f"#{pr_num} ≥80% copycat of #{original} ({best_containment:.0%})")
+        block_account(author, f"#{pr_num} ≥85% copycat of #{original} ({best_containment:.0%})")
         close_blocked_pr(REPO, pr_num, {author})
         print("  block + close done")
     else:
         warn_strikes = sum(1 for e in log if e.get("author") == author and not e.get("blocked", True))
         strike = warn_strikes + 1
-        tag = "LLM" if (structural_fired and best_cos == 0.0) else ("structural" if structural_fired else "containment")
+        tag = "LLM" if (structural_fired and best_cos == 0.0) else ("func" if structural_fired else "containment")
         print(f"  COPYCAT WARN ({tag}): #{pr_num} vs #{original} (strike {strike}/{MAX_WARNINGS})")
-        is_llm = structural_fired and best_cos == 0.0      # LLM judge (cos=0 sentinel)
-        is_func = structural_fired and best_cos == -1.0     # per-function deterministic (cos=-1)
+        is_llm = structural_fired and best_cos == 0.0
         llm_conf_val = best_lev if is_llm else 0.0
         will_block = warn_copycat(REPO, pr_num, original, author, strike, best_containment, structural_fired, llm_conf_val)
         log.append({"pr": pr_num, "author": author, "original": original,
@@ -525,7 +539,7 @@ def main():
                     "containment": round(best_containment, 3)})
         save_copycat_log(log)
         if will_block:
-            block_account(author, f"2nd copycat strike: #{pr_num} ({best_containment:.0%} of #{original})")
+            block_account(author, f"{MAX_WARNINGS} copycat strikes: #{pr_num} ({best_containment:.0%} of #{original})")
             close_blocked_pr(REPO, pr_num, {author})
 
     push_policy_files()
