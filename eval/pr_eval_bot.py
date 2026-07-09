@@ -54,7 +54,7 @@ def _read_pin():
         v = open(PIN_FILE).read().strip()
         if v: return v
     except Exception: pass
-    return os.environ.get("VAST_DEFAULT_INSTANCE", "42682383").strip()
+    return os.environ.get("VAST_DEFAULT_INSTANCE", "44206573").strip()
 def _write_pin(iid):
     try:
         with open(PIN_FILE, "w") as f: f.write(str(iid))
@@ -91,6 +91,17 @@ REEVALUATE_LABEL   = "re-evaluate"    # winner merged → rebase onto new main; 
 HOLD_LABEL         = "hold"           # maintainer override: never auto-merge this PR
 CONTEXT_LABELS     = {"128-context", "512-context", "4k-context", "16k-context", "32k-context"}
 REGRESSION_LABELS  = {"regression-128", "regression-512", "regression-4k", "regression-16k", "regression-32k"}
+
+# Per-context guard baseline fallbacks for display when the RESULT_JSON baseline is 0.
+# Mirrors evaluate_dual.sh hardcoded defaults (used when both eval-box measurement and
+# bot env var are unavailable).
+_GUARD_BASE_FALLBACK = {
+    "guard_128_baseline": 300.16,
+    "guard_512_baseline": 296.76,
+    "guard_4k_baseline":  287.91,
+    "guard_16k_baseline": 338.55,
+    "guard_32k_baseline": 301.19,
+}
 
 # Auto-merge the round's merge-first winner — OFF unless SPARKINFER_AUTOMERGE=1. Heavily guarded:
 # the eval only verifies speed + token-match, so auto-merge is gated on labels, author standing,
@@ -355,7 +366,7 @@ def render(res, oid):
         if not tps:
             continue
         gate = "pass" if res.get(gkey, True) else "fail"
-        base = res.get(bkey) or (res.get("frontier_tps") if key == "ctx_16384_tps" else 0) or 0
+        base = res.get(bkey) or _GUARD_BASE_FALLBACK.get(bkey, 0)
         rows.append(f"| {f'{short} ' if dual else ''}{lbl} no-regression gate | {tps} tok/s"
                     f"{f' vs main {base} tok/s' if base else ''} · {gate} |")
     if res.get("ctx_2048_tps") is not None and res.get("ctx_512_tps") is None:
@@ -434,9 +445,9 @@ def push_dash(msg):
     subprocess.run(["git", "-C", ROOT, "pull", "-q", "--rebase", "origin", "main"], capture_output=True)
     subprocess.run(["git", "-C", ROOT, "push", "-q", "origin", "main"], capture_output=True)
 
-LOG_REPO  = os.environ.get("SPARKINFER_LOG_REPO", "https://github.com/gittensor-ai-lab/sparkinfer-log.git")
+LOG_REPO  = os.environ.get("SPARKINFER_LOG_REPO", "https://github.com/gittensor-ai-lab/sparkinfer.git")
 LOG_DIR   = os.path.expanduser(os.environ.get("SPARKINFER_LOG_DIR", "~/.sparkinfer_log_checkout"))
-LOG_PAGE  = "https://gittensor-ai-lab.github.io/sparkinfer-log/?run="
+LOG_PAGE  = "https://github.com/gittensor-ai-lab/sparkinfer/blob/main/eval/logs/?run="
 
 def upload_eval_log(repo, num, title, oid, res, log_text, baseline):
     """Commit this eval's raw log + result to the public sparkinfer-log repo (immutable record),
@@ -857,11 +868,13 @@ def main():
         print(f">> eval transport: fixed SSH root@{h}:{p} (EVAL_TRANSPORT=ssh, vast.ai disabled)")
     elif vast_enabled():
         print(f">> eval transport: vast.ai (instance {args.instance or current_instance(0)})")
-    # Qwen3.6 same-box origin/main baselines (128/512/4k). Env-overridable; measured 2026-07 on RTX 5090.
+    # Qwen3.6 same-box origin/main baselines (128/512/4k/16k/32k). Env-overridable; measured on RTX 5090.
     QWEN36_BASE = {
         "128": float(os.environ.get("SPARKINFER_QWEN36_128", "300.16")),
         "512": float(os.environ.get("SPARKINFER_QWEN36_512", "296.76")),
         "4k":  float(os.environ.get("SPARKINFER_QWEN36_4K",  "287.91")),
+        "16k": float(os.environ.get("SPARKINFER_QWEN36_16K", "338.55")),
+        "32k": float(os.environ.get("SPARKINFER_QWEN36_32K", "301.19")),
         "llama128": float(os.environ.get("SPARKINFER_QWEN36_LLAMA_128", "275.81")),
         "llama512": float(os.environ.get("SPARKINFER_QWEN36_LLAMA_512", "275.61")),
         "llama4k":  float(os.environ.get("SPARKINFER_QWEN36_LLAMA_4K",  "276.30")),
@@ -1122,7 +1135,7 @@ def main():
         return
 
     # Dual mode: bench Qwen3.6 main directly on the box — the same build the Qwen3-30B
-    # baseline already verified. No accuracy gate, just a 3-context decode sweep.
+    # baseline already verified. No accuracy gate, just a 5-context decode sweep.
     if args.dual and _vast_sh:
         ssh_ep = ssh_box_endpoint()
         if ssh_ep:
@@ -1137,8 +1150,9 @@ def main():
         if host and port:
             M36 = "/workspace/models36/Qwen3.6-35B-A3B-UD-Q4_K_M.gguf"
             B36 = "/root/sparkinfer/build/runtime/qwen3_gguf_bench"
-            tps128 = tps512 = tps4k = 0.0
-            for label, ctx in [("128", 0), ("512", 512), ("4096", 4096)]:
+            tps128 = tps512 = tps4k = tps16k = tps32k = 0.0
+            for label, ctx in [("128", 0), ("512", 512), ("4k", 4096),
+                               ("16k", 16384), ("32k", 32768)]:
                 cmd = f"export PATH=/usr/local/cuda/bin:$PATH; {B36} '{M36}' 128 {ctx}"
                 r = _vast_sh(host, port, cmd, timeout=600)
                 m = re.search(r"decode\s+tg\s*:\s*([0-9.]+)", r.stdout + r.stderr)
@@ -1146,15 +1160,22 @@ def main():
                 else: tps = 0.0
                 if label == "128": tps128 = tps
                 elif label == "512": tps512 = tps
-                else: tps4k = tps
+                elif label == "4k":  tps4k  = tps
+                elif label == "16k": tps16k = tps
+                else:               tps32k = tps
                 print(f"    ctx={label} tps={tps}")
             if tps128 > 0:
                 QWEN36_BASE["128"] = tps128
                 QWEN36_BASE["512"] = tps512 if tps512 > 0 else round(tps128 * 0.98, 2)
                 QWEN36_BASE["4k"]  = tps4k  if tps4k  > 0 else round(tps128 * 0.93, 2)
-                print(f"  Qwen3.6 same-box main: 128={tps128} 512={QWEN36_BASE['512']} 4k={QWEN36_BASE['4k']} tok/s")
+                QWEN36_BASE["16k"] = tps16k if tps16k > 0 else QWEN36_BASE["16k"]
+                QWEN36_BASE["32k"] = tps32k if tps32k > 0 else QWEN36_BASE["32k"]
+                print(f"  Qwen3.6 same-box main: 128={tps128} 512={QWEN36_BASE['512']} "
+                      f"4k={QWEN36_BASE['4k']} 16k={QWEN36_BASE['16k']} 32k={QWEN36_BASE['32k']} tok/s")
             else:
-                print(f"  Qwen3.6 bench failed — using defaults: {QWEN36_BASE['128']}/{QWEN36_BASE['512']}/{QWEN36_BASE['4k']}")
+                print(f"  Qwen3.6 bench failed — using defaults: "
+                      f"{QWEN36_BASE['128']}/{QWEN36_BASE['512']}/{QWEN36_BASE['4k']}/"
+                      f"{QWEN36_BASE['16k']}/{QWEN36_BASE['32k']}")
         else:
             print(f"  could not reach eval box for Qwen3.6 bench — using config defaults")
 
@@ -1188,6 +1209,8 @@ def main():
                 "--p-guard-128-baseline", str(QWEN36_BASE["128"]),
                 "--p-guard-512-baseline", str(QWEN36_BASE["512"]),
                 "--p-guard-4k-baseline",  str(QWEN36_BASE["4k"]),
+                "--p-guard-16k-baseline", str(QWEN36_BASE["16k"]),
+                "--p-guard-32k-baseline", str(QWEN36_BASE["32k"]),
                 "--p-llama-128-baseline", str(QWEN36_BASE["llama128"]),
                 "--p-llama-512-baseline", str(QWEN36_BASE["llama512"]),
                 "--p-llama-4k-baseline",  str(QWEN36_BASE["llama4k"])]

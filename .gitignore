@@ -10,3 +10,4 @@ __pycache__/
 /models/
 dist/
 .claude
+.env.eval

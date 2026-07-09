@@ -59,6 +59,12 @@ void launch_rope_kv_append_partial(
     const int* block_table, const int* positions,
     int n_tokens, int n_q_heads, int n_kv_heads, int head_dim, int rotary_dim,
     float theta, int block_size, int max_blocks_per_seq, cudaStream_t stream = nullptr);
+// int8-KV variant: K/V appended as int8 (per-(token,kv_head) fp16 scale), Q RoPE'd bf16 in-place.
+void launch_rope_kv_append_partial_int8(
+    void* q, const void* k, const void* v, void* k_pool, void* v_pool, void* k_scale, void* v_scale,
+    const int* block_table, const int* positions,
+    int n_tokens, int n_q_heads, int n_kv_heads, int head_dim, int rotary_dim,
+    float theta, int block_size, int max_blocks_per_seq, cudaStream_t stream = nullptr);
 
 // Flash prefill: full causal attention for prompt processing.
 // q/k/v:  [batch, seqlen, num_heads, head_dim]

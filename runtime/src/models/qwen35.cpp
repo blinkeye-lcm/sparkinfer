@@ -524,7 +524,21 @@ int Qwen35Model::forward_token(int token_id, int position) {
                                                       kscale, vscale, kv8 ? 1 : 0);
             } else {
                 // Qwen3.6 (gated / partial-rotary): fuse QK-norm + partial-RoPE + KV when enabled.
-                if (partial_rope && s.use_qkfuse) {
+                if (partial_rope && kv8) {
+                    // int8 KV for the hd256 full-attn layers: QK-norm, then partial-RoPE append that
+                    // quantizes K/V to int8 (+ per-head fp16 scale) so the int8 tensor-core flash-decode
+                    // can halve the KV read. (No fused variant — the int8 append needs a per-head reduce.)
+                    if (s.use_qkfuse)
+                        kernels::launch_rmsnorm_qk(s.q, s.k, w.q_norm, w.k_norm, c.n_q_heads, c.n_kv_heads, c.head_dim, c.rms_eps, st);
+                    else {
+                        kernels::launch_rmsnorm(s.q, w.q_norm, s.q, c.n_q_heads,  c.head_dim, c.rms_eps, st);
+                        kernels::launch_rmsnorm(s.k, w.k_norm, s.k, c.n_kv_heads, c.head_dim, c.rms_eps, st);
+                    }
+                    kernels::launch_rope_kv_append_partial_int8(s.q, s.k, s.v, kpool, vpool, kscale, vscale,
+                                                                btable, s.d_pos, 1, c.n_q_heads, c.n_kv_heads,
+                                                                c.head_dim, c.rope_dim, c.rope_theta,
+                                                                s.kv->block_size(), s.kv->max_blocks_per_seq(), st);
+                } else if (partial_rope && s.use_qkfuse) {
                     kernels::launch_qknorm_rope_kv_partial(s.q, s.k, s.v, w.q_norm, w.k_norm,
                         (bf16*)kpool, (bf16*)vpool, btable, s.d_pos, 1,
                         c.n_q_heads, c.n_kv_heads, c.head_dim, c.rope_dim,
