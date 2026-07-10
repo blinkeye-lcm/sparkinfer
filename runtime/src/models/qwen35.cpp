@@ -18,6 +18,7 @@
 #include "sparkinfer/kernels/fused.h"
 #include "sparkinfer/kernels/moe.h"
 #include "sparkinfer/kernels/quant.h"
+#include "sparkinfer/requant_q80_q6k.h"
 
 #include <cuda_runtime.h>
 #include <cstdio>
@@ -952,6 +953,25 @@ bool Qwen35Model::load_gguf(const std::string& path) {
             return nullptr;
         }
         qtype = t->ggml_type;
+        // Q8_0 -> Q6_K at-load requantize (SPARKINFER_Q80_TO_Q6K, default on): the attn/GDN Q8_0
+        // projections are the #1, bandwidth-bound decode kernel; Q6_K reads ~23% fewer bytes via the
+        // existing dp4a matvec and is near-lossless. Skip the logit-critical lm_head/embedding.
+        static int q80q6k = -1;
+        if (q80q6k < 0) { const char* e = getenv("SPARKINFER_Q80_TO_Q6K"); q80q6k = (e && e[0] == '0') ? 0 : 1; }
+        const bool is_lmhead = name.find("output.weight") != std::string::npos
+                            || name.find("token_embd")   != std::string::npos;
+        if (q80q6k && t->ggml_type == 8 && !is_lmhead && (t->n_values % 256) == 0) {
+            const size_t q6bytes = (size_t)(t->n_values / 256) * 210;
+            std::vector<uint8_t> q6(q6bytes);
+            requant_q80_to_q6k(t->data, q6.data(), t->n_values);
+            void* d6 = nullptr;
+            if (cudaMalloc(&d6, q6bytes) == cudaSuccess) {
+                cudaMemcpy(d6, q6.data(), q6bytes, cudaMemcpyHostToDevice);
+                s.owned.push_back(d6);
+                qtype = 14;   // Q6_K
+                return d6;
+            }
+        }
         void* d = nullptr;
         if (cudaMalloc(&d, t->n_bytes) != cudaSuccess) return nullptr;
         cudaMemcpy(d, t->data, t->n_bytes, cudaMemcpyHostToDevice);
