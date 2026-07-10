@@ -27,6 +27,15 @@ __device__ __forceinline__ float fa_wsum(float v) {
     return v;
 }
 
+// Split-partial accumulator storage type is a template knob (SPARKINFER_FA_PART16): the split kernels
+// write the per-split online-softmax acc to global and the combine kernel reads it back every attention
+// layer, so it can be kept as fp32 (exact, default legacy) or fp16 (halves that global round-trip). The
+// running m/l partials stay fp32 either way. store/load helpers keep the kernel bodies dtype-agnostic.
+__device__ __forceinline__ float fa_ld_acc(float x)  { return x; }
+__device__ __forceinline__ float fa_ld_acc(__half x) { return __half2float(x); }
+__device__ __forceinline__ void  fa_st_acc(float&  d, float v) { d = v; }
+__device__ __forceinline__ void  fa_st_acc(__half& d, float v) { d = __float2half(v); }
+
 // int8_kv: k_pool/v_pool hold int8 and k_scale/v_scale one __half per (token, kv_head) head vector.
 template <int HEAD_DIM>
 __global__ void fa_split_kernel(
@@ -204,10 +213,10 @@ struct fa_block_q8_1 { __half2 ds; signed char qs[32]; };
 // emits the Q8_1 block for attn dims [qh*HEAD_DIM + dg*32, +32) from the bf16-rounded output,
 // so the O-projection MMVQ skips its standalone attn-quantize node (bit-identical to running
 // the quantizer on `out` afterwards). Q8_1 block index = qh*(HEAD_DIM/32) + dg.
-template <int HEAD_DIM, int DG, int NW>
+template <int HEAD_DIM, int DG, int NW, typename AccT = float>
 __global__ void fa_combine_kernel(
     const float* __restrict__ part_m, const float* __restrict__ part_l,
-    const float* __restrict__ part_acc, __nv_bfloat16* __restrict__ out,
+    const AccT* __restrict__ part_acc, __nv_bfloat16* __restrict__ out,
     int num_q_heads, int n_splits, fa_block_q8_1* __restrict__ out_q8 = nullptr
 ) {
     constexpr int ELEMS = HEAD_DIM / (32 * DG);
@@ -226,7 +235,7 @@ __global__ void fa_combine_kernel(
         const float sc = __expf(part_m[idxbase + s] - lm);
         ll += part_l[idxbase + s] * sc;
         #pragma unroll
-        for (int e = 0; e < ELEMS; e++) lacc[e] += sc * part_acc[(size_t)(idxbase + s) * HEAD_DIM + doff + e * 32];
+        for (int e = 0; e < ELEMS; e++) lacc[e] += sc * fa_ld_acc(part_acc[(size_t)(idxbase + s) * HEAD_DIM + doff + e * 32]);
     }
 
     __shared__ float s_m[NW], s_l[NW], s_acc[NW][32 * ELEMS];
@@ -298,6 +307,7 @@ template __global__ void fa_split_gqa_kernel<256, 8, FA_GQA_TILE, false>(const _
 template __global__ void fa_split_gqa_kernel<256, 8, FA_GQA_TILE, true>(const __nv_bfloat16*, const void*, const void*,
     const int*, const int*, float*, float*, float*, float, int, int, int, int, int, const __half*, const __half*);
 template __global__ void fa_combine_kernel<256, FA_COMBINE_DG, FA_COMBINE_NW>(const float*, const float*, const float*, __nv_bfloat16*, int, int, fa_block_q8_1*);
+template __global__ void fa_combine_kernel<256, FA_COMBINE_DG, FA_COMBINE_NW, __half>(const float*, const float*, const __half*, __nv_bfloat16*, int, int, fa_block_q8_1*);
 
 #ifndef SPARKINFER_NVRTC_DEVICE_ONLY
 #include "sparkinfer/kernels/attention.h"
@@ -311,12 +321,12 @@ template __global__ void fa_combine_kernel<256, FA_COMBINE_DG, FA_COMBINE_NW>(co
 // per-token/per-head fp16 scales are applied to the int32 results. This halves the KV global read (the
 // bottleneck) and uses 2x-throughput int8 tensor cores. M is padded 8->16; partials (m,l,acc) stay
 // byte-compatible with the combine kernel. sm_80+ (wmma). One block per (seq, kv_head, split); 8 warps.
-template <int HEAD_DIM, int GQA>
+template <int HEAD_DIM, int GQA, typename AccT = float>
 __global__ void __launch_bounds__(GQA * 32, 5) fa_split_gqa_mma_i8_kernel(
     const __nv_bfloat16* __restrict__ q, const signed char* __restrict__ k_pool,
     const signed char* __restrict__ v_pool, const int* __restrict__ block_table,
     const int* __restrict__ seq_lens,
-    float* __restrict__ part_m, float* __restrict__ part_l, float* __restrict__ part_acc,
+    float* __restrict__ part_m, float* __restrict__ part_l, AccT* __restrict__ part_acc,
     float scale, int num_q_heads, int num_kv_heads, int block_size, int max_blocks, int n_splits,
     const __half* __restrict__ k_scale, const __half* __restrict__ v_scale
 ) {
@@ -470,7 +480,7 @@ __global__ void __launch_bounds__(GQA * 32, 5) fa_split_gqa_mma_i8_kernel(
         const int idx = (seq * num_q_heads + qh) * n_splits + split;
         if (tid == 0) { part_m[idx] = s_m[r]; part_l[idx] = s_l[r]; }
         for (int c = tid; c < HEAD_DIM; c += blockDim.x)
-            part_acc[(size_t)idx * HEAD_DIM + c] = s_o[r * HEAD_DIM + c];
+            fa_st_acc(part_acc[(size_t)idx * HEAD_DIM + c], s_o[r * HEAD_DIM + c]);
     }
 }
 template __global__ void fa_split_gqa_mma_i8_kernel<128, 8>(const __nv_bfloat16*, const signed char*,
@@ -481,6 +491,9 @@ template __global__ void fa_split_gqa_mma_i8_kernel<128, 8>(const __nv_bfloat16*
 // long context. i8 smem = ~33 KB (< 48 KB dynamic cap; 5 blocks/SM fits the 5090's ~228 KB).
 template __global__ void fa_split_gqa_mma_i8_kernel<256, 8>(const __nv_bfloat16*, const signed char*,
     const signed char*, const int*, const int*, float*, float*, float*, float, int, int, int, int, int,
+    const __half*, const __half*);
+template __global__ void fa_split_gqa_mma_i8_kernel<256, 8, __half>(const __nv_bfloat16*, const signed char*,
+    const signed char*, const int*, const int*, float*, float*, __half*, float, int, int, int, int, int,
     const __half*, const __half*);
 
 template <int NW>
@@ -529,6 +542,25 @@ void launch_flash_decode_split(
                 const size_t i8_smem = (size_t)2 * 16 * 256 * sizeof(signed char)
                                      + (size_t)(16 + GQA) * 256 * sizeof(float)     // s_s[16][256] + s_o[GQA][256]
                                      + (size_t)(16 + 16 + 128 + 128 + 16 + 16) * sizeof(float);
+                // fp16 flash-decode partials (SPARKINFER_FA_PART16, default on): the per-split acc buffer is
+                // the last fp32 global round-trip on this long-context path (split writes it, combine reads it
+                // back every full-attn layer). Store/read it as fp16 to halve that traffic; m/l stay fp32. The
+                // fp32 fa_acc alloc is 2x-sized, so the fp16 partials re-host in the same buffer (no new alloc).
+                static int fapart16 = -1;
+                if (fapart16 < 0) { const char* e = getenv("SPARKINFER_FA_PART16"); fapart16 = (e && e[0] == '0') ? 0 : 1; }
+                if (fapart16) {
+                    __half* pa16 = reinterpret_cast<__half*>(part_acc);
+                    fa_split_gqa_mma_i8_kernel<256, GQA, __half><<<gq, GQA * 32, i8_smem, stream>>>(
+                        reinterpret_cast<const __nv_bfloat16*>(q), reinterpret_cast<const signed char*>(k_pool),
+                        reinterpret_cast<const signed char*>(v_pool), block_table, seq_lens,
+                        part_m, part_l, pa16, scale, num_q_heads, num_kv_heads, block_size, max_blocks, n_splits,
+                        reinterpret_cast<const __half*>(k_scale), reinterpret_cast<const __half*>(v_scale));
+                    fa_combine_kernel<256, FA_COMBINE_DG, FA_COMBINE_NW, __half><<<g2, FA_COMBINE_NW * 32, 0, stream>>>(
+                        part_m, part_l, pa16, reinterpret_cast<__nv_bfloat16*>(out), num_q_heads, n_splits,
+                        reinterpret_cast<fa_block_q8_1*>(out_q8));
+                    (void)seqlen;
+                    return;
+                }
                 fa_split_gqa_mma_i8_kernel<256, GQA><<<gq, GQA * 32, i8_smem, stream>>>(
                     reinterpret_cast<const __nv_bfloat16*>(q), reinterpret_cast<const signed char*>(k_pool),
                     reinterpret_cast<const signed char*>(v_pool), block_table, seq_lens,
