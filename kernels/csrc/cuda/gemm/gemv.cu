@@ -954,10 +954,20 @@ void launch_mmvq_q4k_f32(const void* q81, const void* W, float* y, int N, int K,
     else if (K == 4096) si_mmvq_q4k_kfixed_kernel<float, 16><<<N, 4 * 32, 0, stream>>>(q, w, y, N);
     else                si_mmvq_q4k_kernel<float><<<N, 4 * 32, 0, stream>>>(q, w, y, N, K);
 }
+// Coalesced-staging Q8_0 mmvq variant (gemv_q80_coop.cu) — bit-identical, better global-load pattern.
+void launch_mmvq_q80_coop(const void* q81, const void* W, void* y, int N, int K, bool f32, cudaStream_t stream);
+static inline bool q80_coop_on() {
+    static int v = -1;
+    if (v < 0) { const char* e = getenv("SPARKINFER_Q80_COOP"); v = (e && e[0] == '0') ? 0 : 1; }
+    return v != 0;
+}
 void launch_mmvq_q80(const void* q81, const void* W, void* y, int N, int K, cudaStream_t stream) {
     const si_block_q8_1* q = reinterpret_cast<const si_block_q8_1*>(q81);
     const unsigned char* w = reinterpret_cast<const unsigned char*>(W);
     __nv_bfloat16* out = reinterpret_cast<__nv_bfloat16*>(y);
+    if (q80_coop_on() && (K == 2048 || K == 4096) && (reinterpret_cast<size_t>(w) & 15u) == 0) {
+        launch_mmvq_q80_coop(q81, W, y, N, K, false, stream); return;
+    }
     if (K == 2048)      si_mmvq_q80_kfixed_kernel<__nv_bfloat16, 64><<<N, 4 * 32, 0, stream>>>(q, w, out, N);
     else if (K == 4096) si_mmvq_q80_kfixed_kernel<__nv_bfloat16, 128><<<N, 4 * 32, 0, stream>>>(q, w, out, N);
     else                si_mmvq_q80_kernel<__nv_bfloat16><<<N, 4 * 32, 0, stream>>>(q, w, out, N, K);
@@ -965,6 +975,9 @@ void launch_mmvq_q80(const void* q81, const void* W, void* y, int N, int K, cuda
 void launch_mmvq_q80_f32(const void* q81, const void* W, float* y, int N, int K, cudaStream_t stream) {
     const si_block_q8_1* q = reinterpret_cast<const si_block_q8_1*>(q81);
     const unsigned char* w = reinterpret_cast<const unsigned char*>(W);
+    if (q80_coop_on() && (K == 2048 || K == 4096) && (reinterpret_cast<size_t>(w) & 15u) == 0) {
+        launch_mmvq_q80_coop(q81, W, y, N, K, true, stream); return;
+    }
     if (K == 2048)      si_mmvq_q80_kfixed_kernel<float, 64><<<N, 4 * 32, 0, stream>>>(q, w, y, N);
     else if (K == 4096) si_mmvq_q80_kfixed_kernel<float, 128><<<N, 4 * 32, 0, stream>>>(q, w, y, N);
     else                si_mmvq_q80_kernel<float><<<N, 4 * 32, 0, stream>>>(q, w, y, N, K);
