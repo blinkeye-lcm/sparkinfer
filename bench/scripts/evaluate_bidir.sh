@@ -2,15 +2,15 @@
 # Bidirectional evaluation: Qwen3.5-9B (Qwythos) and Qwen3.6-35B-A3B — one build, one box.
 #
 # Runs BOTH scoring directions in one submission:
-#   • score_qwen35 — optimize Qwen3.5 (128/512/4k only), guard Qwen3.6 (no regression, 5 contexts)
-#   • score_qwen36 — optimize Qwen3.6 (5 contexts), guard Qwen3.5 (no regression, 128/512/4k only)
+#   • score_qwen35 — optimize Qwen3.5 (128/4k/32k/64k/128k), guard Qwen3.6 (5 contexts)
+#   • score_qwen36 — optimize Qwen3.6 (5 contexts), guard Qwen3.5 (128/4k/32k/64k/128k)
 #
 #   bench/scripts/evaluate_bidir.sh [--ref GIT_REF] [--ceiling TPS]
 #
 # PRIMARY_QUANT: Q4_K_M (default) | Q8_0 | BF16
 #
 # Env (optional):
-#   SPARKINFER_P35_GUARD_*   Qwen3.5 same-box main tok/s (128/512/4k)
+#   SPARKINFER_P35_GUARD_*   Qwen3.5 same-box main tok/s (128/4k/32k/64k/128k)
 #   SPARKINFER_P36_GUARD_*   Qwen3.6 same-box main tok/s (128/512/4k/16k/32k)
 #   SPARKINFER_G36_GUARD_*   Qwen3.6 guard baselines (for score_qwen35)
 #   SPARKINFER_G35_GUARD_*   Qwen3.5 guard baselines (for score_qwen36)
@@ -46,7 +46,7 @@ P36_TOK="${PRIMARY36_TOK_REPO:-Qwen/Qwen3.6-35B-A3B}"
 P36_DIR="${PRIMARY36_MODELS_DIR:-${MODELS_DIR:-$ROOT/models}36}"
 
 QUANT="${PRIMARY_QUANT:-Q4_K_M}"
-echo ">> bidir: Qwen3.5=$P35_FILE (quant=$QUANT, ctx=128/512/4k) + Qwen3.6=$P36_FILE (ctx=128/512/4k/16k/32k)" >&2
+echo ">> bidir: Qwen3.5=$P35_FILE (quant=$QUANT, ctx=128/4k/32k/64k/128k) + Qwen3.6=$P36_FILE (ctx=128/512/4k/16k/32k)" >&2
 
 reap() { pkill -f llama-server 2>/dev/null || true; pkill -f qwen3_gguf 2>/dev/null || true; sleep 1; true; }
 
@@ -54,10 +54,20 @@ if [ "$BASELINE_ONLY" = 1 ]; then
   echo ">> bidir baseline-only: ctx speed sweep on origin/main (skip PR build + dual eval)" >&2
   reap
   git -C "$ROOT" fetch -q origin main 2>/dev/null || true
-  git -C "$ROOT" checkout -qf origin/main
-  COMMIT="$(git -C "$ROOT" rev-parse --short HEAD)"
+  if [ -n "${SI_NO_CHECKOUT:-}" ]; then
+    _bl_head="$(git -C "$ROOT" rev-parse origin/main)"
+    COMMIT="$(git -C "$ROOT" rev-parse --short origin/main)"
+    _bs_save="$(mktemp -d)"
+    cp -a "$ROOT/bench/scripts/." "$_bs_save/"
+    git -C "$ROOT" checkout -qf origin/main
+    cp -a "$_bs_save/." "$ROOT/bench/scripts/"
+    rm -rf "$_bs_save"
+  else
+    git -C "$ROOT" checkout -qf origin/main
+    COMMIT="$(git -C "$ROOT" rev-parse --short HEAD)"
+    _bl_head="$(git -C "$ROOT" rev-parse HEAD)"
+  fi
   _bl_mark="$ROOT/build/.baseline_commit"
-  _bl_head="$(git -C "$ROOT" rev-parse HEAD)"
   if [ ! -x "$ROOT/build/runtime/qwen3_gguf_bench" ] || \
      [ "$(cat "$_bl_mark" 2>/dev/null)" != "$_bl_head" ]; then
     echo ">> baseline-only: building origin/main ($_bl_head) ..." >&2
@@ -68,16 +78,16 @@ if [ "$BASELINE_ONLY" = 1 ]; then
     fi
     echo "$_bl_head" > "$_bl_mark"
   fi
-  # Never trust dashboard defaults for the bot baseline — always re-measure on-box.
   SPARKINFER_P36_GUARD_128_BASELINE=0
   SPARKINFER_P36_GUARD_512_BASELINE=0
   SPARKINFER_P36_GUARD_4K_BASELINE=0
   SPARKINFER_P36_GUARD_16K_BASELINE=0
   SPARKINFER_P36_GUARD_32K_BASELINE=0
   SPARKINFER_P35_GUARD_128_BASELINE=0
-  SPARKINFER_P35_GUARD_512_BASELINE=0
   SPARKINFER_P35_GUARD_4K_BASELINE=0
-  # Baseline must match production defaults (DOWN_REQUANT defaults ON in qwen35.cpp since v0.4.0).
+  SPARKINFER_P35_GUARD_32K_BASELINE=0
+  SPARKINFER_P35_GUARD_64K_BASELINE=0
+  SPARKINFER_P35_GUARD_128K_BASELINE=0
 else
   echo ">> [build] submission ($COMMIT) from source (sm_$ARCH) — shared by both models ..." >&2
   rm -rf "$ROOT/build"
@@ -86,7 +96,6 @@ else
     printf 'RESULT_JSON {"commit": "%s", "tps": 0, "top1": 0, "kl": 99, "frontier_tps": 0, "label": "REJECT", "reason": "build failed (does not compile)", "pass": false, "mode": "bidir"}\n' "$COMMIT"
     exit 0
   fi
-  # Match production Qwythos path (DOWN_REQUANT defaults ON; explicit for PR builds).
   export SPARKINFER_DOWN_REQUANT_Q4K=1
 fi
 
@@ -101,15 +110,18 @@ run_model() {
     | sed -n 's/^RESULT_JSON //p' | tail -1
 }
 
-# Qwen3.5: score/guard at 128/512/4k only (skip 16k/32k measurement).
-Q35_SHORT_ENVS=(
+# Qwen3.5: score/guard at 128/4k/32k/64k/128k (skip 512 and 16k).
+Q35_CTX_ENVS=(
   SPARKINFER_SCORE_REPS=0
-  SPARKINFER_GUARD_32K_REPS=0
+  SPARKINFER_GUARD_512_REPS=0
+  SPARKINFER_GUARD_16K_REPS=0
   SPARKINFER_GUARD_REPS=3
-  SPARKINFER_GUARD_512_REPS=3
   SPARKINFER_GUARD_4K_REPS=3
+  SPARKINFER_GUARD_32K_REPS=3
+  SPARKINFER_GUARD_64K_REPS=3
+  SPARKINFER_GUARD_128K_REPS=3
   SPARKINFER_GUARD_16K_BASELINE=0
-  SPARKINFER_GUARD_32K_BASELINE=0
+  SPARKINFER_GUARD_512_BASELINE=0
 )
 
 # Qwen3.6: full 5-context sweep.
@@ -121,12 +133,11 @@ Q36_FULL_ENVS=(
   SPARKINFER_GUARD_4K_REPS=3
 )
 
-# Auto-measure same-box main baselines when unset.
 resolve_runner "$ARCH"
 pin_clocks
 trap 'unpin_clocks' EXIT
 
-_bench_decode_tps() {  # $1=gguf $2=ctx — never abort the sweep on a single failed run
+_bench_decode_tps() {
   local out rc=0
   out="$(si_run qwen3_gguf_bench "$1" 128 "$2" 2>&1)" || rc=$?
   if [ "$rc" != 0 ]; then
@@ -155,21 +166,22 @@ if [ "${SPARKINFER_P36_GUARD_128_BASELINE:-0}" = "0" ]; then
 fi
 
 if [ "${SPARKINFER_P35_GUARD_128_BASELINE:-0}" = "0" ]; then
-  echo ">> measuring Qwen3.5 same-box main (128/512/4k) ..." >&2
+  echo ">> measuring Qwen3.5 same-box main (128/4k/32k/64k/128k) ..." >&2
   P35_GGUF="${P35_DIR}/${P35_FILE}"
-  for ctx in 0 512 4096; do
+  for ctx in 0 4096 32768 65536 131072; do
     t="$(_bench_decode_tps "$P35_GGUF" "$ctx")"
     t="${t:-0}"
     case "$ctx" in
-      0)    B35_128="${t:-0}" ;;
-      512)  B35_512="${t:-0}" ;;
-      4096) B35_4K="${t:-0}" ;;
+      0)      B35_128="${t:-0}" ;;
+      4096)   B35_4K="${t:-0}" ;;
+      32768)  B35_32K="${t:-0}" ;;
+      65536)  B35_64K="${t:-0}" ;;
+      131072) B35_128K="${t:-0}" ;;
     esac
   done
-  echo ">> Qwen3.5 main: 128=${B35_128:-0} 512=${B35_512:-0} 4k=${B35_4K:-0} tok/s" >&2
+  echo ">> Qwen3.5 main: 128=${B35_128:-0} 4k=${B35_4K:-0} 32k=${B35_32K:-0} 64k=${B35_64K:-0} 128k=${B35_128K:-0} tok/s" >&2
 fi
 
-# Resolved baselines (bot-passed or auto-measured or hardcoded Qwen3.6 defaults).
 B36_128="${B36_128:-${SPARKINFER_P36_GUARD_128_BASELINE:-0}}"
 B36_512="${B36_512:-${SPARKINFER_P36_GUARD_512_BASELINE:-0}}"
 B36_4K="${B36_4K:-${SPARKINFER_P36_GUARD_4K_BASELINE:-0}}"
@@ -184,8 +196,10 @@ if [ "$BASELINE_ONLY" != 1 ]; then
 fi
 
 B35_128="${B35_128:-${SPARKINFER_P35_GUARD_128_BASELINE:-0}}"
-B35_512="${B35_512:-${SPARKINFER_P35_GUARD_512_BASELINE:-0}}"
 B35_4K="${B35_4K:-${SPARKINFER_P35_GUARD_4K_BASELINE:-0}}"
+B35_32K="${B35_32K:-${SPARKINFER_P35_GUARD_32K_BASELINE:-0}}"
+B35_64K="${B35_64K:-${SPARKINFER_P35_GUARD_64K_BASELINE:-0}}"
+B35_128K="${B35_128K:-${SPARKINFER_P35_GUARD_128K_BASELINE:-0}}"
 
 G36_128="${SPARKINFER_G36_GUARD_128_BASELINE:-$B36_128}"
 G36_512="${SPARKINFER_G36_GUARD_512_BASELINE:-$B36_512}"
@@ -194,12 +208,13 @@ G36_16K="${SPARKINFER_G36_GUARD_16K_BASELINE:-$B36_16K}"
 G36_32K="${SPARKINFER_G36_GUARD_32K_BASELINE:-$B36_32K}"
 
 G35_128="${SPARKINFER_G35_GUARD_128_BASELINE:-$B35_128}"
-G35_512="${SPARKINFER_G35_GUARD_512_BASELINE:-$B35_512}"
 G35_4K="${SPARKINFER_G35_GUARD_4K_BASELINE:-$B35_4K}"
+G35_32K="${SPARKINFER_G35_GUARD_32K_BASELINE:-$B35_32K}"
+G35_64K="${SPARKINFER_G35_GUARD_64K_BASELINE:-$B35_64K}"
+G35_128K="${SPARKINFER_G35_GUARD_128K_BASELINE:-$B35_128K}"
 
 P_DIFF_REF="${SPARKINFER_DIFFICULTY_REF_OVERRIDE:-365.85}"
 
-# Bot same-box baseline: one build + ctx speed sweep only (skip 4× evaluate.sh + accuracy).
 if [ "$BASELINE_ONLY" = 1 ]; then
   echo ">> bidir baseline-only: ctx sweep complete — skipping full dual-model eval" >&2
   if [ "${B36_128:-0}" = "0" ] || [ "${B35_128:-0}" = "0" ]; then
@@ -207,23 +222,22 @@ if [ "$BASELINE_ONLY" = 1 ]; then
     printf 'RESULT_JSON {"commit": "%s", "tps": 0, "top1": 0, "kl": 99, "label": "REJECT", "reason": "baseline ctx sweep failed (0 tok/s)", "pass": false, "mode": "bidir"}\n' "$COMMIT"
     exit 0
   fi
-  B36_128="${B36_128:-0}"; B36_512="${B36_512:-0}"; B36_4K="${B36_4K:-0}"
-  B36_16K="${B36_16K:-0}"; B36_32K="${B36_32K:-0}"
-  B35_128="${B35_128:-0}"; B35_512="${B35_512:-0}"; B35_4K="${B35_4K:-0}"
   QUANT="${PRIMARY_QUANT:-Q4_K_M}"
   python3 - <<PY
 import json
 commit = "$COMMIT"
 quant = "$QUANT"
-def stub(tps, ctx128, ctx512, ctx4k, ctx16k=0, ctx32k=0):
+def stub(tps, ctx128, ctx4k, ctx32k=0, ctx64k=0, ctx128k=0, ctx512=0, ctx16k=0):
     return {"pass": True, "label": "BASELINE", "tps": float(tps or ctx128 or 0),
             "top1": 1.0, "kl": 0.0, "ctx_128_tps": float(ctx128 or 0),
             "ctx_512_tps": float(ctx512 or 0), "ctx_4096_tps": float(ctx4k or 0),
             "ctx_16384_tps": float(ctx16k or 0), "ctx_32768_tps": float(ctx32k or 0),
+            "ctx_65536_tps": float(ctx64k or 0), "ctx_131072_tps": float(ctx128k or 0),
             "guard_128_pass": True, "guard_512_pass": True, "guard_4k_pass": True,
-            "guard_16k_pass": True, "guard_32k_pass": True}
-s35 = stub("$B35_128", "$B35_128", "$B35_512", "$B35_4K")
-s36 = stub("$B36_128", "$B36_128", "$B36_512", "$B36_4K", "$B36_16K", "$B36_32K")
+            "guard_16k_pass": True, "guard_32k_pass": True,
+            "guard_64k_pass": True, "guard_128k_pass": True}
+s35 = stub("$B35_128", "$B35_128", "$B35_4K", "$B35_32K", "$B35_64K", "$B35_128K")
+s36 = stub("$B36_128", "$B36_128", "$B36_4K", "$B36_32K", ctx512="$B36_512", ctx16k="$B36_16K")
 out = {"pass": True, "label": "BASELINE", "commit": commit, "mode": "bidir", "model": "bidir",
        "tps": s36["tps"], "top1": 1.0, "kl": 0.0, "primary_quant": quant,
        "score_qwen35": s35, "score_qwen36": s36, "pass_qwen35": True, "pass_qwen36": True,
@@ -233,17 +247,20 @@ PY
   exit 0
 fi
 
-# --- Direction A: optimize Qwen3.5, guard Qwen3.6 -----------------------------------------------
 PRIMARY35_JSON="$(run_model primary-qwen35 "$P35_FILE" "$P35_REPO" "$P35_TOK" 0 \
   MODELS_DIR="$P35_DIR" MODEL_SHA256="${P35_SHA}" \
-  "${Q35_SHORT_ENVS[@]}" \
+  "${Q35_CTX_ENVS[@]}" \
   SPARKINFER_DIFFICULTY_BOOST=1 SPARKINFER_DIFFICULTY_REF="${P_DIFF_REF}" \
   SPARKINFER_GUARD_128_BASELINE="${B35_128}" \
-  SPARKINFER_GUARD_512_BASELINE="${B35_512}" \
   SPARKINFER_GUARD_4K_BASELINE="${B35_4K}" \
+  SPARKINFER_GUARD_32K_BASELINE="${B35_32K}" \
+  SPARKINFER_GUARD_64K_BASELINE="${B35_64K}" \
+  SPARKINFER_GUARD_128K_BASELINE="${B35_128K}" \
   SPARKINFER_LLAMA_128_BASELINE="${SPARKINFER_P35_LLAMA_128_BASELINE:-${QWEN35_9B_LLAMA_128:-0}}" \
-  SPARKINFER_LLAMA_512_BASELINE="${SPARKINFER_P35_LLAMA_512_BASELINE:-${QWEN35_9B_LLAMA_512:-0}}" \
-  SPARKINFER_LLAMA_4K_BASELINE="${SPARKINFER_P35_LLAMA_4K_BASELINE:-${QWEN35_9B_LLAMA_4K:-0}}")"
+  SPARKINFER_LLAMA_4K_BASELINE="${SPARKINFER_P35_LLAMA_4K_BASELINE:-${QWEN35_9B_LLAMA_4K:-0}}" \
+  SPARKINFER_LLAMA_32K_BASELINE="${SPARKINFER_P35_LLAMA_32K_BASELINE:-${QWEN35_9B_LLAMA_32K:-0}}" \
+  SPARKINFER_LLAMA_64K_BASELINE="${SPARKINFER_P35_LLAMA_64K_BASELINE:-${QWEN35_9B_LLAMA_64K:-0}}" \
+  SPARKINFER_LLAMA_128K_BASELINE="${SPARKINFER_P35_LLAMA_128K_BASELINE:-${QWEN35_9B_LLAMA_128K:-0}}")"
 
 GUARD36_JSON="$(run_model guard36 "$P36_FILE" "$P36_REPO" "$P36_TOK" 0 \
   MODELS_DIR="$P36_DIR" MODEL_SHA256="${QWEN36_MODEL_SHA256:-}" \
@@ -254,7 +271,6 @@ GUARD36_JSON="$(run_model guard36 "$P36_FILE" "$P36_REPO" "$P36_TOK" 0 \
   SPARKINFER_GUARD_16K_BASELINE="${G36_16K}" \
   SPARKINFER_GUARD_32K_BASELINE="${G36_32K}")"
 
-# --- Direction B: optimize Qwen3.6, guard Qwen3.5 -----------------------------------------------
 PRIMARY36_JSON="$(run_model primary-qwen36 "$P36_FILE" "$P36_REPO" "$P36_TOK" 0 \
   MODELS_DIR="$P36_DIR" MODEL_SHA256="${QWEN36_MODEL_SHA256:-}" \
   "${Q36_FULL_ENVS[@]}" \
@@ -272,10 +288,12 @@ PRIMARY36_JSON="$(run_model primary-qwen36 "$P36_FILE" "$P36_REPO" "$P36_TOK" 0 
 
 GUARD35_JSON="$(run_model guard35 "$P35_FILE" "$P35_REPO" "$P35_TOK" 0 \
   MODELS_DIR="$P35_DIR" MODEL_SHA256="${P35_SHA}" \
-  "${Q35_SHORT_ENVS[@]}" \
+  "${Q35_CTX_ENVS[@]}" \
   SPARKINFER_GUARD_128_BASELINE="${G35_128}" \
-  SPARKINFER_GUARD_512_BASELINE="${G35_512}" \
-  SPARKINFER_GUARD_4K_BASELINE="${G35_4K}")"
+  SPARKINFER_GUARD_4K_BASELINE="${G35_4K}" \
+  SPARKINFER_GUARD_32K_BASELINE="${G35_32K}" \
+  SPARKINFER_GUARD_64K_BASELINE="${G35_64K}" \
+  SPARKINFER_GUARD_128K_BASELINE="${G35_128K}")"
 reap
 
 PRIMARY35_JSON="$PRIMARY35_JSON" GUARD36_JSON="$GUARD36_JSON" \
@@ -293,7 +311,8 @@ def load(name):
         return {}
 
 def guard_ok(guard):
-    gctx = ["guard_128_pass", "guard_512_pass", "guard_4k_pass", "guard_16k_pass", "guard_32k_pass"]
+    gctx = ["guard_128_pass", "guard_512_pass", "guard_4k_pass", "guard_16k_pass", "guard_32k_pass",
+            "guard_64k_pass", "guard_128k_pass"]
     present = [k for k in gctx if k in guard]
     top1_bar = float(os.environ.get("SPARKINFER_TOP1_BAR", "0.90"))
     kl_bar = float(os.environ.get("SPARKINFER_KL_BAR", "0.20"))
@@ -301,7 +320,8 @@ def guard_ok(guard):
     g_top1 = float(guard.get("top1", 0)); g_kl = float(guard.get("kl", 99))
     acc_ok = g_top1 >= top1_bar and g_kl <= kl_bar
     label_map = {"guard_128_pass": "128", "guard_512_pass": "512", "guard_4k_pass": "4k",
-                 "guard_16k_pass": "16k", "guard_32k_pass": "32k"}
+                 "guard_16k_pass": "16k", "guard_32k_pass": "32k",
+                 "guard_64k_pass": "64k", "guard_128k_pass": "128k"}
     regressed = [label_map[k] for k in present if not guard.get(k, True)]
     return bool(guard) and speed_ok and acc_ok, regressed, speed_ok, acc_ok
 
@@ -315,8 +335,9 @@ def merge_primary(primary, guard, scored_model, guard_model, guard_prefix):
     out["guard_model"] = guard_model
     out["guard"] = {k: guard.get(k) for k in (
         "pass", "top1", "kl", "label", "ctx_128_tps", "ctx_512_tps", "ctx_4096_tps",
-        "ctx_16384_tps", "ctx_32768_tps", "guard_128_pass", "guard_512_pass", "guard_4k_pass",
-        "guard_16k_pass", "guard_32k_pass") if k in guard}
+        "ctx_16384_tps", "ctx_32768_tps", "ctx_65536_tps", "ctx_131072_tps",
+        "guard_128_pass", "guard_512_pass", "guard_4k_pass", "guard_16k_pass", "guard_32k_pass",
+        "guard_64k_pass", "guard_128k_pass") if k in guard}
     out["guard"]["speed_ok"] = speed_ok
     out["guard"]["accuracy_ok"] = acc_ok
     if not speed_ok or not acc_ok:
