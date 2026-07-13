@@ -269,14 +269,18 @@ def main():
     ap.add_argument("--p-llama-32k-baseline", type=float, default=0, help="[--dual] Qwen3.6 llama.cpp 32k-context tok/s")
     # --- bidirectional: Qwen3.5-9B + Qwen3.6-35B (both directions scored) ---
     ap.add_argument("--bidir", action="store_true",
-                    help="bidirectional eval: score Qwen3.5 (128/512/4k) and Qwen3.6 (5 contexts), "
+                    help="bidirectional eval: score Qwen3.5 (128/4k/32k/64k/128k) and Qwen3.6 (5 contexts), "
                          "each guarding the other via evaluate_bidir.sh")
     ap.add_argument("--p35-guard-128-baseline", type=float, default=0, help="[--bidir] Qwen3.5 main 128-token tok/s")
-    ap.add_argument("--p35-guard-512-baseline", type=float, default=0, help="[--bidir] Qwen3.5 main 512-context tok/s")
     ap.add_argument("--p35-guard-4k-baseline",  type=float, default=0, help="[--bidir] Qwen3.5 main 4k-context tok/s")
+    ap.add_argument("--p35-guard-32k-baseline", type=float, default=0, help="[--bidir] Qwen3.5 main 32k-context tok/s")
+    ap.add_argument("--p35-guard-64k-baseline", type=float, default=0, help="[--bidir] Qwen3.5 main 64k-context tok/s")
+    ap.add_argument("--p35-guard-128k-baseline", type=float, default=0, help="[--bidir] Qwen3.5 main 128k-context tok/s")
     ap.add_argument("--g35-guard-128-baseline", type=float, default=0, help="[--bidir] Qwen3.5 guard 128-token tok/s")
-    ap.add_argument("--g35-guard-512-baseline", type=float, default=0, help="[--bidir] Qwen3.5 guard 512-context tok/s")
     ap.add_argument("--g35-guard-4k-baseline",  type=float, default=0, help="[--bidir] Qwen3.5 guard 4k-context tok/s")
+    ap.add_argument("--g35-guard-32k-baseline", type=float, default=0, help="[--bidir] Qwen3.5 guard 32k-context tok/s")
+    ap.add_argument("--g35-guard-64k-baseline", type=float, default=0, help="[--bidir] Qwen3.5 guard 64k-context tok/s")
+    ap.add_argument("--g35-guard-128k-baseline", type=float, default=0, help="[--bidir] Qwen3.5 guard 128k-context tok/s")
     # --- triple-model: legacy alias for --bidir ---
     ap.add_argument("--triple", action="store_true",
                     help="alias for --bidir (Qwen3.5 + Qwen3.6 only; Qwen3-30B removed)")
@@ -634,8 +638,10 @@ def main():
             eval_cmd = (f"SI_NO_CHECKOUT=1 SPARKINFER_EVAL_SEED={eval_seed} "
                         f"SPARKINFER_EVAL_MODE={args.eval_mode} PRIMARY_QUANT={args.primary_quant} "
                         f"SPARKINFER_P35_GUARD_128_BASELINE={args.p35_guard_128_baseline} "
-                        f"SPARKINFER_P35_GUARD_512_BASELINE={args.p35_guard_512_baseline} "
                         f"SPARKINFER_P35_GUARD_4K_BASELINE={args.p35_guard_4k_baseline} "
+                        f"SPARKINFER_P35_GUARD_32K_BASELINE={args.p35_guard_32k_baseline} "
+                        f"SPARKINFER_P35_GUARD_64K_BASELINE={args.p35_guard_64k_baseline} "
+                        f"SPARKINFER_P35_GUARD_128K_BASELINE={args.p35_guard_128k_baseline} "
                         f"SPARKINFER_P36_GUARD_128_BASELINE={args.p_guard_128_baseline} "
                         f"SPARKINFER_P36_GUARD_512_BASELINE={args.p_guard_512_baseline} "
                         f"SPARKINFER_P36_GUARD_4K_BASELINE={args.p_guard_4k_baseline} "
@@ -647,8 +653,10 @@ def main():
                         f"SPARKINFER_G36_GUARD_16K_BASELINE={args.g36_guard_16k_baseline} "
                         f"SPARKINFER_G36_GUARD_32K_BASELINE={args.g36_guard_32k_baseline} "
                         f"SPARKINFER_G35_GUARD_128_BASELINE={args.g35_guard_128_baseline} "
-                        f"SPARKINFER_G35_GUARD_512_BASELINE={args.g35_guard_512_baseline} "
                         f"SPARKINFER_G35_GUARD_4K_BASELINE={args.g35_guard_4k_baseline} "
+                        f"SPARKINFER_G35_GUARD_32K_BASELINE={args.g35_guard_32k_baseline} "
+                        f"SPARKINFER_G35_GUARD_64K_BASELINE={args.g35_guard_64k_baseline} "
+                        f"SPARKINFER_G35_GUARD_128K_BASELINE={args.g35_guard_128k_baseline} "
                         f"SPARKINFER_P35_LLAMA_128_BASELINE={args.p_llama_128_baseline} "
                         f"SPARKINFER_P35_LLAMA_512_BASELINE={args.p_llama_512_baseline} "
                         f"SPARKINFER_P35_LLAMA_4K_BASELINE={args.p_llama_4k_baseline} "
