@@ -276,6 +276,10 @@ def main():
     ap.add_argument("--p35-guard-32k-baseline", type=float, default=0, help="[--bidir] Qwen3.5 main 32k-context tok/s")
     ap.add_argument("--p35-guard-64k-baseline", type=float, default=0, help="[--bidir] Qwen3.5 main 64k-context tok/s")
     ap.add_argument("--p35-guard-128k-baseline", type=float, default=0, help="[--bidir] Qwen3.5 main 128k-context tok/s")
+    ap.add_argument("--p35-guard-4k-pp-baseline", type=float, default=0, help="[--bidir] Qwen3.5 main 4k prefill pp tok/s")
+    ap.add_argument("--p35-guard-32k-pp-baseline", type=float, default=0, help="[--bidir] Qwen3.5 main 32k prefill pp tok/s")
+    ap.add_argument("--p35-guard-64k-pp-baseline", type=float, default=0, help="[--bidir] Qwen3.5 main 64k prefill pp tok/s")
+    ap.add_argument("--p35-guard-128k-pp-baseline", type=float, default=0, help="[--bidir] Qwen3.5 main 128k prefill pp tok/s")
     ap.add_argument("--g35-guard-128-baseline", type=float, default=0, help="[--bidir] Qwen3.5 guard 128-token tok/s")
     ap.add_argument("--g35-guard-4k-baseline",  type=float, default=0, help="[--bidir] Qwen3.5 guard 4k-context tok/s")
     ap.add_argument("--g35-guard-32k-baseline", type=float, default=0, help="[--bidir] Qwen3.5 guard 32k-context tok/s")
@@ -642,6 +646,10 @@ def main():
                         f"SPARKINFER_P35_GUARD_32K_BASELINE={args.p35_guard_32k_baseline} "
                         f"SPARKINFER_P35_GUARD_64K_BASELINE={args.p35_guard_64k_baseline} "
                         f"SPARKINFER_P35_GUARD_128K_BASELINE={args.p35_guard_128k_baseline} "
+                        f"SPARKINFER_P35_GUARD_4K_PP_BASELINE={args.p35_guard_4k_pp_baseline} "
+                        f"SPARKINFER_P35_GUARD_32K_PP_BASELINE={args.p35_guard_32k_pp_baseline} "
+                        f"SPARKINFER_P35_GUARD_64K_PP_BASELINE={args.p35_guard_64k_pp_baseline} "
+                        f"SPARKINFER_P35_GUARD_128K_PP_BASELINE={args.p35_guard_128k_pp_baseline} "
                         f"SPARKINFER_P36_GUARD_128_BASELINE={args.p_guard_128_baseline} "
                         f"SPARKINFER_P36_GUARD_512_BASELINE={args.p_guard_512_baseline} "
                         f"SPARKINFER_P36_GUARD_4K_BASELINE={args.p_guard_4k_baseline} "

@@ -27,6 +27,47 @@ class PrEvalBotPolicyTest(unittest.TestCase):
         self.assertIn("regression-4k", bot.AUTOMERGE_BLOCK_LABELS)
         self.assertIn("regression-16k", bot.AUTOMERGE_BLOCK_LABELS)
         self.assertIn("regression-32k", bot.AUTOMERGE_BLOCK_LABELS)
+        self.assertIn("regression-4k-pp", bot.AUTOMERGE_BLOCK_LABELS)
+
+    def test_bidir_qwen35_prefill_render(self):
+        res = {
+            "mode": "bidir",
+            "label": "M",
+            "pass": True,
+            "eval_mode": "longctx",
+            "label_qwen35": "M",
+            "label_qwen36": "none",
+            "pass_qwen35": True,
+            "pass_qwen36": True,
+            "score_qwen35": {
+                "label": "M",
+                "pass": True,
+                "tps": 140.0,
+                "frontier_tps": 126.0,
+                "pct_over_frontier": 11.1,
+                "delta_tps": 14.0,
+                "top1": 0.97,
+                "kl": 0.02,
+                "score_context": 4096,
+                "best_context_label": "4k-context",
+                "eval_prefill": True,
+                "prefill_label": "S",
+                "prefill_tps": 4200.0,
+                "score_prefill_context": 32768,
+                "best_prefill_context_label": "32k-context",
+                "ctx_4096_pp_tps": 4100.0,
+                "ctx_32768_pp_tps": 4200.0,
+                "guard_4k_pp_baseline": 4000.0,
+                "guard_4k_pp_pass": True,
+                "guard_32k_pp_baseline": 3900.0,
+                "guard_32k_pp_pass": True,
+            },
+            "score_qwen36": {"label": "none", "pass": True, "tps": 300.0, "top1": 0.97, "kl": 0.02},
+        }
+        body = bot.render(res, "abc1234")
+        self.assertIn("scored prefill", body)
+        self.assertIn("`eval-prefill:S`", body)
+        self.assertIn("4k prefill no-regression gate", body)
 
     def test_mixed_win_render_keeps_eval_label_and_shows_regression(self):
         res = {

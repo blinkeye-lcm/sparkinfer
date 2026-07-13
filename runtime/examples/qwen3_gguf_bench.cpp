@@ -76,7 +76,8 @@ int main(int argc, char** argv) {
     if (!ok) { printf("[FAIL] load\n"); return 1; }
     size_t freeb=0, totb=0; cudaMemGetInfo(&freeb,&totb);
 
-    double toks = model.bench_decode(8, n_tokens, context_tokens);
+    auto bench = model.bench_decode(8, n_tokens, context_tokens);
+    double toks = bench.decode_tps;
     auto gpu = sparkinfer::query_gpu_stats();   // sampled right after the decode loop — near peak heat
     printf("\n=== sparkinfer bench (%s) ===\n", gguf_mode ? "Q4_K_M native" : "bf16");
     printf("model        : %s  (%d layers, %d experts top-%d)\n",
@@ -84,7 +85,10 @@ int main(int argc, char** argv) {
     printf("VRAM used    : %.1f GB\n", (totb - freeb) / 1e9);
     printf("max seq      : %d\n", cfg.max_seq);
     printf("decode tg    : %.2f tok/s  (%.1f ms/token, n=%d, ctx=%d, bs=1)\n",
-           toks, 1000.0 / toks, n_tokens, context_tokens);
+           toks, toks > 0 ? 1000.0 / toks : 0.0, n_tokens, context_tokens);
+    if (context_tokens > 0 && bench.prefill_pp > 0)
+        printf("prefill pp   : %.2f tok/s  (ctx=%d, sequential KV fill)\n",
+               bench.prefill_pp, context_tokens);
     if (gpu.valid && gpu.temp_c >= 0) {
         printf("GPU          : %d°C", gpu.temp_c);
         if (gpu.power_w      >= 0) printf(" · %d W", gpu.power_w);

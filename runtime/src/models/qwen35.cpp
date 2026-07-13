@@ -985,9 +985,10 @@ int Qwen35Model::forward_token(int token_id, int position) {
     return *s.h_out_id;
 }
 
-double Qwen35Model::bench_decode(int warmup, int n, int context_tokens) {
+Qwen35Model::BenchDecodeResult Qwen35Model::bench_decode(int warmup, int n, int context_tokens) {
+    BenchDecodeResult out{};
     Impl& s = *p_;
-    if (!s.kv->allocate(s.seq_id, s.cfg.max_seq)) { fprintf(stderr, "[bench] kv allocate failed\n"); return -1; }
+    if (!s.kv->allocate(s.seq_id, s.cfg.max_seq)) { fprintf(stderr, "[bench] kv allocate failed\n"); return out; }
     int start_pos = context_tokens;
     if (const char* e = getenv("SPARKINFER_BENCH_START_POS")) {
         start_pos = atoi(e);
@@ -997,7 +998,7 @@ double Qwen35Model::bench_decode(int warmup, int n, int context_tokens) {
         fprintf(stderr, "[bench] requested ctx=%d warmup=%d n=%d exceeds max_seq=%d\n",
                 start_pos, warmup, n, s.cfg.max_seq);
         s.kv->free(s.seq_id);
-        return -1;
+        return out;
     }
     static int bench_device_loop = -1;
     if (bench_device_loop < 0) {
@@ -1006,7 +1007,13 @@ double Qwen35Model::bench_decode(int warmup, int n, int context_tokens) {
     }
     s.bench_feedback_graph = bench_device_loop != 0;
     int pos = 0, tok = 100;
-    for (; pos < start_pos; pos++) { tok = forward_token(tok, pos); if (tok < 0 || tok >= s.cfg.vocab) tok = 100; }
+    if (start_pos > 0) {
+        auto p0 = std::chrono::high_resolution_clock::now();
+        for (; pos < start_pos; pos++) { tok = forward_token(tok, pos); if (tok < 0 || tok >= s.cfg.vocab) tok = 100; }
+        cudaDeviceSynchronize();
+        auto p1 = std::chrono::high_resolution_clock::now();
+        out.prefill_pp = start_pos / std::chrono::duration<double>(p1 - p0).count();
+    }
     for (int i = 0; i < warmup; i++) { tok = forward_token(tok, pos++); if (tok < 0 || tok >= s.cfg.vocab) tok = 100; }
     if (s.graph_ready) cu(cudaGraphUpload(s.cu_exec, s.stream), "bench graph upload");
     cudaDeviceSynchronize();
@@ -1027,7 +1034,8 @@ double Qwen35Model::bench_decode(int warmup, int n, int context_tokens) {
         s.kv->free(s.seq_id);
         s.bench_feedback_graph = false;
         double secs = std::chrono::duration<double>(t1 - t0).count();
-        return n / secs;
+        out.decode_tps = n / secs;
+        return out;
     }
 
     auto t0 = std::chrono::high_resolution_clock::now();
@@ -1037,7 +1045,8 @@ double Qwen35Model::bench_decode(int warmup, int n, int context_tokens) {
     s.kv->free(s.seq_id);
     s.bench_feedback_graph = false;
     double secs = std::chrono::duration<double>(t1 - t0).count();
-    return n / secs;
+    out.decode_tps = n / secs;
+    return out;
 }
 
 std::vector<int> Qwen35Model::generate(const std::vector<int>& prompt, int max_new, ThermalGovernor* gov) {

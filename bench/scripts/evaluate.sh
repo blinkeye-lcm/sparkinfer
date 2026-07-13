@@ -10,6 +10,7 @@
 # measured artifact is the submitted code.
 set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"; source "$HERE/_common.sh"
+source "$HERE/_eval_speed.sh"
 [ -f "$HERE/_qwythos.sh" ] && source "$HERE/_qwythos.sh"
 
 REF=""; FRONTIER=0; CEILING=0; GGUF=""
@@ -96,8 +97,22 @@ LLAMA_16K_BASELINE="${SPARKINFER_LLAMA_16K_BASELINE:-245.53}"
 LLAMA_32K_BASELINE="${SPARKINFER_LLAMA_32K_BASELINE:-192.62}"
 LLAMA_64K_BASELINE="${SPARKINFER_LLAMA_64K_BASELINE:-0}"
 LLAMA_128K_BASELINE="${SPARKINFER_LLAMA_128K_BASELINE:-0}"
+GUARD_4K_PP_BASELINE="${SPARKINFER_GUARD_4K_PP_BASELINE:-0}"
+GUARD_32K_PP_BASELINE="${SPARKINFER_GUARD_32K_PP_BASELINE:-0}"
+GUARD_64K_PP_BASELINE="${SPARKINFER_GUARD_64K_PP_BASELINE:-0}"
+GUARD_128K_PP_BASELINE="${SPARKINFER_GUARD_128K_PP_BASELINE:-0}"
+LLAMA_4K_PP_BASELINE="${SPARKINFER_LLAMA_4K_PP_BASELINE:-0}"
+LLAMA_32K_PP_BASELINE="${SPARKINFER_LLAMA_32K_PP_BASELINE:-0}"
+LLAMA_64K_PP_BASELINE="${SPARKINFER_LLAMA_64K_PP_BASELINE:-0}"
+LLAMA_128K_PP_BASELINE="${SPARKINFER_LLAMA_128K_PP_BASELINE:-0}"
+# Prefill scoring is Qwen3.5-only (Qwythos bidir primary). Qwen3.6 / guard runs leave this at 0.
+EVAL_PREFILL="${SPARKINFER_EVAL_PREFILL:-0}"
 
-echo ">> [2/3] speed — ${EVAL_MODE} decode benchmark ..." >&2
+if [ "$EVAL_PREFILL" = "1" ]; then
+  echo ">> [2/3] speed — ${EVAL_MODE} decode + Qwen3.5 prefill pp benchmark ..." >&2
+else
+  echo ">> [2/3] speed — ${EVAL_MODE} decode benchmark ..." >&2
+fi
 # M1: pin the GPU clock so the absolute tok/s is reproducible (not just same-box-cancelled). Best-
 # effort; reset on exit no matter how we leave. Warmup still runs as the fallback when pinning is
 # refused, and to spin clocks up before the first timed build (the cold-clock artifact that once
@@ -106,17 +121,6 @@ pin_clocks
 trap 'unpin_clocks' EXIT
 
 gclks=()
-median_ctx() {  # $1=context tokens, $2=repetitions ; reps<=0 SKIPS the context (returns 0, no run)
-  local ctx="$1" reps="$2" vals=() t
-  [ "${reps:-0}" -le 0 ] && { echo 0; return; }
-  for _ in $(seq 1 "$reps"); do
-    t=$(si_run qwen3_gguf_bench "$GGUF" "$DECODE_TOKENS" "$ctx" 2>/dev/null |
-        sed -n 's/.*decode tg *: *\([0-9.][0-9.]*\).*/\1/p' || true)
-    vals+=("${t:-0}")
-    gclks+=("$(nvidia-smi --query-gpu=clocks.gr --format=csv,noheader,nounits 2>/dev/null | head -1 | tr -d ' ')")
-  done
-  printf '%s\n' "${vals[@]}" | sort -n | awk '{a[NR]=$1} END{print a[int((NR+1)/2)]}'
-}
 
 if [ "$EVAL_MODE" = "short" ]; then
   si_run qwen3_gguf_bench "$GGUF" 192 0 >/dev/null 2>&1 || true
@@ -126,9 +130,17 @@ if [ "$EVAL_MODE" = "short" ]; then
   GUARD_RATIO=0; GUARD_512_RATIO=0; GUARD_4K_RATIO=0; GUARD_16K_RATIO=0
   SELECTED_TPS="$TPS"; SELECTED_FRONTIER="$FRONTIER"; SELECTED_CTX=128
   SELECTED_CONTEXT_LABEL="128-context"; BEST_CONTEXT_LABEL="128-context"; SELECTED_LLAMA_REF="$LLAMA_128_BASELINE"
-  CONTEXT_GAINS_JSON='{}'
+  SELECTED_GAIN=0; CONTEXT_GAINS_JSON='{}'; REGRESSION_LABELS_JSON='[]'
+  HAS_VERIFIED_CONTEXT_GAIN=false
+  PREFILL_SELECTED_TPS=0; PREFILL_SELECTED_FRONTIER=0; PREFILL_SELECTED_CTX=0
+  PREFILL_SELECTED_LABEL=""; PREFILL_SELECTED_LLAMA_REF=0; PREFILL_SELECTED_GAIN=0
+  PREFILL_CONTEXT_GAINS_JSON='{}'
 else
-  echo ">> context policy: ${DECODE_TOKENS}-token decode at 128/512/4k/16k/32k/64k/128k (as configured); all measured contexts guarded; best context scores" >&2
+  if [ "$EVAL_PREFILL" = "1" ]; then
+    echo ">> context policy: ${DECODE_TOKENS}-token decode + prefill pp at 4k/32k/64k/128k; best context scores each metric" >&2
+  else
+    echo ">> context policy: ${DECODE_TOKENS}-token decode at 128/512/4k/16k/32k/64k/128k (as configured); all measured contexts guarded; best context scores" >&2
+  fi
   si_run qwen3_gguf_bench "$GGUF" 64 "$GUARD_CTX" >/dev/null 2>&1 || true
   GUARD_TPS="$(median_ctx "$GUARD_CTX" "$GUARD_REPS")"
   GUARD_512_TPS="$(median_ctx "$GUARD_512_CTX" "$GUARD_512_REPS")"
@@ -137,6 +149,14 @@ else
   GUARD_32K_TPS="$(median_ctx "$GUARD_32K_CTX" "$GUARD_32K_REPS")"
   GUARD_64K_TPS="$(median_ctx "$GUARD_64K_CTX" "$GUARD_64K_REPS")"
   GUARD_128K_TPS="$(median_ctx "$GUARD_128K_CTX" "$GUARD_128K_REPS")"
+  if [ "$EVAL_PREFILL" = "1" ]; then
+    GUARD_4K_PP_TPS="$(median_ctx_pp "$GUARD_4K_CTX" "$GUARD_4K_REPS")"
+    GUARD_32K_PP_TPS="$(median_ctx_pp "$GUARD_32K_CTX" "$GUARD_32K_REPS")"
+    GUARD_64K_PP_TPS="$(median_ctx_pp "$GUARD_64K_CTX" "$GUARD_64K_REPS")"
+    GUARD_128K_PP_TPS="$(median_ctx_pp "$GUARD_128K_CTX" "$GUARD_128K_REPS")"
+  else
+    GUARD_4K_PP_TPS=0; GUARD_32K_PP_TPS=0; GUARD_64K_PP_TPS=0; GUARD_128K_PP_TPS=0
+  fi
   GUARD_RATIO="$(python3 - <<PY
 base=float("$GUARD_BASELINE")
 cur=float("$GUARD_TPS")
@@ -228,6 +248,26 @@ tol=float("$GUARD_128K_TOL")
 print("true" if base <= 0 or cur >= base * tol else "false")
 PY
 )"
+  GUARD_4K_PP_PASS="$(python3 - <<PY
+base=float("$GUARD_4K_PP_BASELINE"); cur=float("$GUARD_4K_PP_TPS"); tol=float("$GUARD_4K_TOL")
+print("true" if "$EVAL_PREFILL" != "1" or base <= 0 or cur >= base * tol else "false")
+PY
+)"
+  GUARD_32K_PP_PASS="$(python3 - <<PY
+base=float("$GUARD_32K_PP_BASELINE"); cur=float("$GUARD_32K_PP_TPS"); tol=float("$GUARD_32K_TOL")
+print("true" if "$EVAL_PREFILL" != "1" or base <= 0 or cur >= base * tol else "false")
+PY
+)"
+  GUARD_64K_PP_PASS="$(python3 - <<PY
+base=float("$GUARD_64K_PP_BASELINE"); cur=float("$GUARD_64K_PP_TPS"); tol=float("$GUARD_64K_TOL")
+print("true" if "$EVAL_PREFILL" != "1" or base <= 0 or cur >= base * tol else "false")
+PY
+)"
+  GUARD_128K_PP_PASS="$(python3 - <<PY
+base=float("$GUARD_128K_PP_BASELINE"); cur=float("$GUARD_128K_PP_TPS"); tol=float("$GUARD_128K_TOL")
+print("true" if "$EVAL_PREFILL" != "1" or base <= 0 or cur >= base * tol else "false")
+PY
+)"
   SCORE_SELECT="$(python3 - <<PY
 import json
 contexts = [
@@ -254,6 +294,13 @@ chosen = max(scorable, key=lambda c: c["gain"]) if scorable else next(c for c in
 print(json.dumps({"chosen": chosen, "contexts": contexts}, separators=(",", ":")))
 PY
 )"
+  if [ "$EVAL_PREFILL" = "1" ]; then
+    export LLAMA_4K_PP="$LLAMA_4K_PP_BASELINE" LLAMA_32K_PP="$LLAMA_32K_PP_BASELINE"
+    export LLAMA_64K_PP="$LLAMA_64K_PP_BASELINE" LLAMA_128K_PP="$LLAMA_128K_PP_BASELINE"
+    PREFILL_SCORE_SELECT="$(build_pp_score_select)"
+  else
+    PREFILL_SCORE_SELECT='{"chosen":{"ctx":4096,"label":"4k-context","tps":0,"base":0,"llama":0,"gain":0},"contexts":[]}'
+  fi
   SELECTED_TPS="$(SCORE_SELECT="$SCORE_SELECT" python3 - <<'PY'
 import json, os
 print(json.loads(os.environ["SCORE_SELECT"])["chosen"]["tps"])
@@ -285,6 +332,41 @@ import json, os
 print(json.loads(os.environ["SCORE_SELECT"])["chosen"]["gain"])
 PY
 )"
+  PREFILL_SELECTED_TPS="$(PREFILL_SCORE_SELECT="$PREFILL_SCORE_SELECT" python3 - <<'PY'
+import json, os
+print(json.loads(os.environ["PREFILL_SCORE_SELECT"])["chosen"]["tps"])
+PY
+)"
+  PREFILL_SELECTED_FRONTIER="$(PREFILL_SCORE_SELECT="$PREFILL_SCORE_SELECT" python3 - <<'PY'
+import json, os
+print(json.loads(os.environ["PREFILL_SCORE_SELECT"])["chosen"]["base"])
+PY
+)"
+  PREFILL_SELECTED_CTX="$(PREFILL_SCORE_SELECT="$PREFILL_SCORE_SELECT" python3 - <<'PY'
+import json, os
+print(json.loads(os.environ["PREFILL_SCORE_SELECT"])["chosen"]["ctx"])
+PY
+)"
+  PREFILL_SELECTED_LABEL="$(PREFILL_SCORE_SELECT="$PREFILL_SCORE_SELECT" python3 - <<'PY'
+import json, os
+print(json.loads(os.environ["PREFILL_SCORE_SELECT"])["chosen"]["label"])
+PY
+)"
+  PREFILL_SELECTED_LLAMA_REF="$(PREFILL_SCORE_SELECT="$PREFILL_SCORE_SELECT" python3 - <<'PY'
+import json, os
+print(json.loads(os.environ["PREFILL_SCORE_SELECT"])["chosen"]["llama"])
+PY
+)"
+  PREFILL_SELECTED_GAIN="$(PREFILL_SCORE_SELECT="$PREFILL_SCORE_SELECT" python3 - <<'PY'
+import json, os
+print(json.loads(os.environ["PREFILL_SCORE_SELECT"])["chosen"]["gain"])
+PY
+)"
+  PREFILL_CONTEXT_GAINS_JSON="$(PREFILL_SCORE_SELECT="$PREFILL_SCORE_SELECT" python3 - <<'PY'
+import json, os
+print(json.dumps({c["label"]: round(100*c["gain"], 2) for c in json.loads(os.environ["PREFILL_SCORE_SELECT"])["contexts"] if c["tps"] > 0}, separators=(",", ":")))
+PY
+)"
   CONTEXT_GAINS_JSON="$(SCORE_SELECT="$SCORE_SELECT" python3 - <<'PY'
 import json, os
 print(json.dumps({c["label"]: round(100*c["gain"], 2) for c in json.loads(os.environ["SCORE_SELECT"])["contexts"] if c["tps"] > 0}, separators=(",", ":")))
@@ -300,15 +382,26 @@ if "$GUARD_16K_PASS" != "true": labels.append("regression-16k")
 if "$GUARD_32K_PASS" != "true": labels.append("regression-32k")
 if "$GUARD_64K_PASS" != "true": labels.append("regression-64k")
 if "$GUARD_128K_PASS" != "true": labels.append("regression-128k")
+if "$EVAL_PREFILL" == "1":
+  if "$GUARD_4K_PP_PASS" != "true": labels.append("regression-4k-pp")
+  if "$GUARD_32K_PP_PASS" != "true": labels.append("regression-32k-pp")
+  if "$GUARD_64K_PP_PASS" != "true": labels.append("regression-64k-pp")
+  if "$GUARD_128K_PP_PASS" != "true": labels.append("regression-128k-pp")
 print(json.dumps(labels, separators=(",", ":")))
 PY
 )"
   ALL_GUARDS_PASS="$(python3 - <<PY
-print("true" if all(x == "true" for x in ["$GUARD_PASS", "$GUARD_512_PASS", "$GUARD_4K_PASS", "$GUARD_16K_PASS", "$GUARD_32K_PASS", "$GUARD_64K_PASS", "$GUARD_128K_PASS"]) else "false")
+decode = ["$GUARD_PASS", "$GUARD_512_PASS", "$GUARD_4K_PASS", "$GUARD_16K_PASS", "$GUARD_32K_PASS", "$GUARD_64K_PASS", "$GUARD_128K_PASS"]
+pp = []
+if "$EVAL_PREFILL" == "1":
+    pp = ["$GUARD_4K_PP_PASS", "$GUARD_32K_PP_PASS", "$GUARD_64K_PP_PASS", "$GUARD_128K_PP_PASS"]
+print("true" if all(x == "true" for x in decode + pp) else "false")
 PY
 )"
   HAS_VERIFIED_CONTEXT_GAIN="$(python3 - <<PY
-print("true" if float("$SELECTED_GAIN") > 0.02 else "false")
+decode_gain = float("$SELECTED_GAIN")
+pp_gain = float("$PREFILL_SELECTED_GAIN") if "$EVAL_PREFILL" == "1" else 0.0
+print("true" if decode_gain > 0.02 or pp_gain > 0.02 else "false")
 PY
 )"
 fi
@@ -391,6 +484,25 @@ if "$EVAL_MODE" != "short":
     "guard_128k_tol": float("$GUARD_128K_TOL"),
     "guard_128k_pass": "$GUARD_128K_PASS" == "true",
   })
+  if "$EVAL_PREFILL" == "1":
+    data.update({
+      "eval_prefill": True,
+      "score_prefill_context": int("$PREFILL_SELECTED_CTX"),
+      "best_prefill_context_label": "$PREFILL_SELECTED_LABEL",
+      "prefill_context_gains_pct": json.loads('''$PREFILL_CONTEXT_GAINS_JSON'''),
+      "ctx_4096_pp_tps": round(float("$GUARD_4K_PP_TPS"), 2),
+      "ctx_32768_pp_tps": round(float("$GUARD_32K_PP_TPS"), 2),
+      "ctx_65536_pp_tps": round(float("$GUARD_64K_PP_TPS"), 2),
+      "ctx_131072_pp_tps": round(float("$GUARD_128K_PP_TPS"), 2),
+      "guard_4k_pp_baseline": round(float("$GUARD_4K_PP_BASELINE"), 2),
+      "guard_4k_pp_pass": "$GUARD_4K_PP_PASS" == "true",
+      "guard_32k_pp_baseline": round(float("$GUARD_32K_PP_BASELINE"), 2),
+      "guard_32k_pp_pass": "$GUARD_32K_PP_PASS" == "true",
+      "guard_64k_pp_baseline": round(float("$GUARD_64K_PP_BASELINE"), 2),
+      "guard_64k_pp_pass": "$GUARD_64K_PP_PASS" == "true",
+      "guard_128k_pp_baseline": round(float("$GUARD_128K_PP_BASELINE"), 2),
+      "guard_128k_pp_pass": "$GUARD_128K_PP_PASS" == "true",
+    })
 print(json.dumps(data, separators=(",", ":")))
 PY
 )"
@@ -405,6 +517,11 @@ guard16k=float("$TPS"); base16k=float("$GUARD_16K_BASELINE"); tol16k=float("$GUA
 guard32k=float("$GUARD_32K_TPS"); base32k=float("$GUARD_32K_BASELINE"); tol32k=float("$GUARD_32K_TOL")
 guard64k=float("$GUARD_64K_TPS"); base64k=float("$GUARD_64K_BASELINE"); tol64k=float("$GUARD_64K_TOL")
 guard128k=float("$GUARD_128K_TPS"); base128k=float("$GUARD_128K_BASELINE"); tol128k=float("$GUARD_128K_TOL")
+pp4k=float("$GUARD_4K_PP_TPS"); basepp4k=float("$GUARD_4K_PP_BASELINE")
+pp32k=float("$GUARD_32K_PP_TPS"); basepp32k=float("$GUARD_32K_PP_BASELINE")
+pp64k=float("$GUARD_64K_PP_TPS"); basepp64k=float("$GUARD_64K_PP_BASELINE")
+pp128k=float("$GUARD_128K_PP_TPS"); basepp128k=float("$GUARD_128K_PP_BASELINE")
+eval_prefill = "$EVAL_PREFILL" == "1"
 reasons = []
 if base > 0 and guard < base * tol:
     reasons.append(f"128-token decode no-regression gate: {guard:.2f} tok/s < {tol:.0%} of main {base:.2f} tok/s")
@@ -420,6 +537,15 @@ if base64k > 0 and guard64k < base64k * tol64k:
     reasons.append(f"64k-context decode no-regression gate: {guard64k:.2f} tok/s < {tol64k:.0%} of main {base64k:.2f} tok/s")
 if base128k > 0 and guard128k < base128k * tol128k:
     reasons.append(f"128k-context decode no-regression gate: {guard128k:.2f} tok/s < {tol128k:.0%} of main {base128k:.2f} tok/s")
+if eval_prefill:
+    if basepp4k > 0 and pp4k < basepp4k * tol4k:
+        reasons.append(f"4k-context prefill no-regression gate: {pp4k:.2f} pp tok/s < {tol4k:.0%} of main {basepp4k:.2f} pp tok/s")
+    if basepp32k > 0 and pp32k < basepp32k * tol32k:
+        reasons.append(f"32k-context prefill no-regression gate: {pp32k:.2f} pp tok/s < {tol32k:.0%} of main {basepp32k:.2f} pp tok/s")
+    if basepp64k > 0 and pp64k < basepp64k * tol64k:
+        reasons.append(f"64k-context prefill no-regression gate: {pp64k:.2f} pp tok/s < {tol64k:.0%} of main {basepp64k:.2f} pp tok/s")
+    if basepp128k > 0 and pp128k < basepp128k * tol128k:
+        reasons.append(f"128k-context prefill no-regression gate: {pp128k:.2f} pp tok/s < {tol128k:.0%} of main {basepp128k:.2f} pp tok/s")
 res = {
   "commit": "$COMMIT",
   "tps": round(tps, 2),
@@ -439,4 +565,32 @@ print("RESULT_JSON " + json.dumps(res))
 PY
   exit 0
 fi
-SPARKINFER_DIFFICULTY_REF="$SELECTED_LLAMA_REF" python3 "$HERE/label.py" "$SELECTED_TPS" "$SELECTED_FRONTIER" "$CEILING" "$TOP1" "$KL" "$COMMIT" "$PROV"
+DECODE_LINE="$(SPARKINFER_DIFFICULTY_REF="$SELECTED_LLAMA_REF" python3 "$HERE/label.py" "$SELECTED_TPS" "$SELECTED_FRONTIER" "$CEILING" "$TOP1" "$KL" "$COMMIT" "$PROV")"
+if [ "$EVAL_PREFILL" != "1" ] || [ "$(python3 - <<PY
+print("yes" if float("${PREFILL_SELECTED_TPS:-0}") > 0 and float("${PREFILL_SELECTED_FRONTIER:-0}") > 0 else "no")
+PY
+)" != "yes" ]; then
+  echo "$DECODE_LINE"
+  exit 0
+fi
+PREFILL_LINE="$(SPARKINFER_DIFFICULTY_REF="$PREFILL_SELECTED_LLAMA_REF" python3 "$HERE/label.py" "$PREFILL_SELECTED_TPS" "$PREFILL_SELECTED_FRONTIER" "$CEILING" "$TOP1" "$KL" "$COMMIT" "{}")"
+DECODE_LINE="$DECODE_LINE" PREFILL_LINE="$PREFILL_LINE" python3 - <<'PY'
+import json, os
+decode_line = os.environ.get("DECODE_LINE", "").strip()
+prefill_raw = os.environ.get("PREFILL_LINE", "").strip()
+if not decode_line.startswith("RESULT_JSON "):
+    print(decode_line); raise SystemExit(0)
+res = json.loads(decode_line[len("RESULT_JSON "):])
+if prefill_raw.startswith("RESULT_JSON "):
+    pf = json.loads(prefill_raw[len("RESULT_JSON "):])
+    res["prefill_tps"] = pf.get("tps", 0)
+    res["prefill_frontier_tps"] = pf.get("frontier_tps", 0)
+    res["prefill_label"] = pf.get("label")
+    res["prefill_delta_tps"] = pf.get("delta_tps")
+    res["prefill_pct_over_frontier"] = pf.get("pct_over_frontier")
+    res["prefill_pct_of_llama"] = pf.get("pct_of_llama")
+    res["prefill_effective_pct"] = pf.get("effective_pct")
+    if pf.get("difficulty_mult") is not None:
+        res["prefill_difficulty_mult"] = pf["difficulty_mult"]
+print("RESULT_JSON " + json.dumps(res))
+PY

@@ -80,6 +80,10 @@ def _bidir_baseline_args(q36, q35):
         "--p35-guard-32k-baseline", str(q35["32k"]),
         "--p35-guard-64k-baseline", str(q35["64k"]),
         "--p35-guard-128k-baseline", str(q35["128k"]),
+        "--p35-guard-4k-pp-baseline", str(q35.get("4k_pp", 0)),
+        "--p35-guard-32k-pp-baseline", str(q35.get("32k_pp", 0)),
+        "--p35-guard-64k-pp-baseline", str(q35.get("64k_pp", 0)),
+        "--p35-guard-128k-pp-baseline", str(q35.get("128k_pp", 0)),
         "--p-guard-128-baseline", str(q36["128"]),
         "--p-guard-512-baseline", str(q36["512"]),
         "--p-guard-4k-baseline",  str(q36["4k"]),
@@ -108,6 +112,10 @@ def _apply_bidir_ctx_from_bres(bres, q36, q35):
         "16k": "ctx_16384_tps", "32k": "ctx_32768_tps",
         "64k": "ctx_65536_tps", "128k": "ctx_131072_tps",
     }
+    pp_map = {
+        "4k_pp": "ctx_4096_pp_tps", "32k_pp": "ctx_32768_pp_tps",
+        "64k_pp": "ctx_65536_pp_tps", "128k_pp": "ctx_131072_pp_tps",
+    }
 
     def _fill(score, store, keys):
         if not score:
@@ -119,8 +127,19 @@ def _apply_bidir_ctx_from_bres(bres, q36, q35):
             store[k] = v
         return True
 
+    def _fill_pp(score, store, keys):
+        if not score:
+            return False
+        for k in keys:
+            v = float(score.get(pp_map[k]) or 0)
+            if v <= 0:
+                return False
+            store[k] = v
+        return True
+
     got36 = _fill(bres.get("score_qwen36"), q36, ("128", "512", "4k", "16k", "32k"))
     got35 = _fill(bres.get("score_qwen35"), q35, ("128", "4k", "32k", "64k", "128k"))
+    _fill_pp(bres.get("score_qwen35"), q35, ("4k_pp", "32k_pp", "64k_pp", "128k_pp"))
     return got36 and got35
 
 
@@ -153,7 +172,8 @@ STALE_CLOSE_SKIP_LABELS = {HOLD_LABEL, MERGE_FIRST_LABEL}  # protected from auto
 CONTEXT_LABELS     = {"128-context", "512-context", "4k-context", "16k-context", "32k-context",
                       "64k-context", "128k-context"}
 REGRESSION_LABELS  = {"regression-128", "regression-512", "regression-4k", "regression-16k",
-                      "regression-32k", "regression-64k", "regression-128k"}
+                      "regression-32k", "regression-64k", "regression-128k",
+                      "regression-4k-pp", "regression-32k-pp", "regression-64k-pp", "regression-128k-pp"}
 
 # Per-context guard baseline fallbacks for display when the RESULT_JSON baseline is 0.
 # Mirrors evaluate_dual.sh hardcoded defaults (used when both eval-box measurement and
@@ -526,6 +546,12 @@ def render(res, oid):
                             f"({block.get('delta_tps', 0):+.1f}) |")
             rows.append(f"| {title} scored decode ({sc} ctx"
                         f"{f' · {bctx}' if bctx else ''}) | {block.get('tps', '?')} tok/s |")
+            if block.get("prefill_label"):
+                pctx = block.get("score_prefill_context", 0)
+                plbl = block.get("best_prefill_context_label", "")
+                rows.append(f"| {title} scored prefill ({pctx} ctx"
+                            f"{f' · {plbl}' if plbl else ''}) | {block.get('prefill_tps', '?')} pp tok/s · "
+                            f"`eval-prefill:{block.get('prefill_label')}` |")
             rows.append(f"| {title} correctness | top-1 {block.get('top1', 0) * 100:.1f}% · "
                         f"KL {block.get('kl', '?')} |")
             for key, gkey, bkey, lbl in [
@@ -543,6 +569,18 @@ def render(res, oid):
                 base = block.get(bkey) or _GUARD_BASE_FALLBACK.get(bkey, 0)
                 rows.append(f"| {title} {lbl} no-regression gate | {tps} tok/s"
                             f"{f' vs main {base} tok/s' if base else ''} · {gate} |")
+            for key, gkey, bkey, lbl in [
+                    ("ctx_4096_pp_tps", "guard_4k_pp_pass", "guard_4k_pp_baseline", "4k prefill"),
+                    ("ctx_32768_pp_tps", "guard_32k_pp_pass", "guard_32k_pp_baseline", "32k prefill"),
+                    ("ctx_65536_pp_tps", "guard_64k_pp_pass", "guard_64k_pp_baseline", "64k prefill"),
+                    ("ctx_131072_pp_tps", "guard_128k_pp_pass", "guard_128k_pp_baseline", "128k prefill")]:
+                tps = block.get(key)
+                if not tps:
+                    continue
+                gate = "pass" if block.get(gkey, True) else "fail"
+                base = block.get(bkey) or 0
+                rows.append(f"| {title} {lbl} no-regression gate | {tps} pp tok/s"
+                            f"{f' vs main {base} pp tok/s' if base else ''} · {gate} |")
     if not bidir:
         rows += [
             f"| scored decode ({res.get('score_context', 128)} ctx{f' · {ctx_label}' if ctx_label else ''}{f' · {short}' if dual or triple else ''}) | {res.get('tps','?')} tok/s |",
@@ -641,7 +679,9 @@ def render(res, oid):
                          f"{res.get('tps')} tok/s (main was {res.get('frontier_tps','?')} tok/s).")
     if label == "REJECT" and res.get("auto_close"):
         note = "No context cleared the 2% significance gate while at least one context regressed. Auto-closing this PR."
-    target_note = ("128/512/4k/16k/32k guarded · scored vs same-box main · strongest context scores"
+    target_note = ("128/512/4k/16k/32k guarded · Qwen3.5 prefill at 4k/32k/64k/128k · scored vs same-box main"
+                   if res.get("eval_mode") == "longctx" and (res.get("score_qwen35") or {}).get("eval_prefill")
+                   else "128/512/4k/16k/32k guarded · scored vs same-box main · strongest context scores"
                    if res.get("eval_mode") == "longctx" else "128-token decode scored vs same-box main")
     return (f"<!-- sparkinfer-eval:{oid} -->\n"
             f"## {icon} sparkinfer auto-eval — `{oid}`\n\n"
@@ -1413,6 +1453,14 @@ def main():
         "llama32k": float(os.environ.get("QWEN35_9B_LLAMA_32K", "0")),
         "llama64k": float(os.environ.get("QWEN35_9B_LLAMA_64K", "0")),
         "llama128k": float(os.environ.get("QWEN35_9B_LLAMA_128K", "0")),
+        "4k_pp": float(os.environ.get("SPARKINFER_QWYTHOS_4K_PP", "0")),
+        "32k_pp": float(os.environ.get("SPARKINFER_QWYTHOS_32K_PP", "0")),
+        "64k_pp": float(os.environ.get("SPARKINFER_QWYTHOS_64K_PP", "0")),
+        "128k_pp": float(os.environ.get("SPARKINFER_QWYTHOS_128K_PP", "0")),
+        "llama4k_pp": float(os.environ.get("QWEN35_9B_LLAMA_4K_PP", "0")),
+        "llama32k_pp": float(os.environ.get("QWEN35_9B_LLAMA_32K_PP", "0")),
+        "llama64k_pp": float(os.environ.get("QWEN35_9B_LLAMA_64K_PP", "0")),
+        "llama128k_pp": float(os.environ.get("QWEN35_9B_LLAMA_128K_PP", "0")),
     }
 
     # --- Polaris verifiable compute ---
@@ -1723,6 +1771,10 @@ def main():
               f"128={QWYTHOS_BASE['128']} 4k={QWYTHOS_BASE['4k']} "
               f"32k={QWYTHOS_BASE['32k']} 64k={QWYTHOS_BASE['64k']} "
               f"128k={QWYTHOS_BASE['128k']} tok/s")
+        if any(QWYTHOS_BASE.get(k, 0) for k in ("4k_pp", "32k_pp", "64k_pp", "128k_pp")):
+            print(f"  Qwythos prefill pp: 4k={QWYTHOS_BASE.get('4k_pp', 0)} "
+                  f"32k={QWYTHOS_BASE.get('32k_pp', 0)} 64k={QWYTHOS_BASE.get('64k_pp', 0)} "
+                  f"128k={QWYTHOS_BASE.get('128k_pp', 0)} pp tok/s")
 
     # Run all pending evals on the SAME instance: pass --keep so vast_eval.py never stops/destroys
     # the box mid-queue. The bot stops the instance once after ALL PRs finish (or if the instance
