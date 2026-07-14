@@ -78,6 +78,13 @@ class PrEvalBotPolicyTest(unittest.TestCase):
         self.assertEqual(status, "unchecked")
         self.assertIn("unchecked", reason)
 
+    def test_rtx5090_box_checked(self):
+        ticked = self._TEMPLATE_DECODE.format(db=300, da=320)
+        self.assertTrue(bot.rtx5090_box_checked(ticked))
+        self.assertFalse(bot.rtx5090_box_checked(ticked.replace("[x]", "[ ]")))
+        self.assertFalse(bot.rtx5090_box_checked("- [x] Tested on RTX 4090"))
+        self.assertFalse(bot.rtx5090_box_checked(""))
+
     def test_decode_val_ignores_prefill_rows(self):
         body = self._TEMPLATE_BOTH.format(db=301, da=310, pb=250, pa=260)
         self.assertEqual(bot._decode_val(body, "before"), 301.0)

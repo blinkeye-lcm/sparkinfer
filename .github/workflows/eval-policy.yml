@@ -6,12 +6,14 @@ on:
       - "bench/scripts/**"
       - "eval/**"
       - ".github/workflows/eval-policy.yml"
+      - ".github/workflows/rtx5090-required.yml"
   push:
     branches: [main]
     paths:
       - "bench/scripts/**"
       - "eval/**"
       - ".github/workflows/eval-policy.yml"
+      - ".github/workflows/rtx5090-required.yml"
 
 permissions:
   contents: read

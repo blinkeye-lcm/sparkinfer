@@ -1,0 +1,111 @@
+name: rtx5090-required
+
+# Close PRs that do not tick the template's "Tested on RTX 5090" checkbox.
+# Evaluation is opt-in — unchecked PRs are not kept in the open review queue.
+#
+# Contributor flow after auto-close:
+#   1. Edit the PR description on the closed PR: tick the box + fill benchmark tables.
+#   2. Reopen the PR.
+#
+# Safe by design: pull_request_target never checks out or runs PR code — GitHub API only.
+# Draft PRs, bots, maintainers, and PRs labeled `hold` are exempt.
+
+on:
+  pull_request_target:
+    types: [opened, edited, reopened]
+  workflow_dispatch:
+
+permissions:
+  pull-requests: write
+  issues: write
+
+concurrency:
+  group: rtx5090-required-${{ github.event.pull_request.number || 'sweep' }}
+  cancel-in-progress: false
+
+jobs:
+  gate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Close PRs without RTX 5090 attestation
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const EXEMPT_ASSOC = new Set(['OWNER', 'MEMBER', 'COLLABORATOR']);
+            const EXEMPT_LOGIN = new Set(['ai-hpc']);
+            const SKIP_LABELS = new Set(['hold']);
+
+            function rtx5090Checked(body) {
+              if (!body) return false;
+              return body.split('\n').some(ln =>
+                /\[\s*[xX]\s*\]/.test(ln) && ln.includes('5090')
+              );
+            }
+
+            function exempt(pr) {
+              if (!pr || pr.draft) return true;
+              if (pr.user?.type === 'Bot') return true;
+              if (EXEMPT_LOGIN.has(pr.user?.login)) return true;
+              if (EXEMPT_ASSOC.has(pr.author_association)) return true;
+              const labels = (pr.labels || []).map(l => l.name);
+              if (labels.some(n => SKIP_LABELS.has(n))) return true;
+              return false;
+            }
+
+            async function maybeClose(pr) {
+              if (!pr || pr.state !== 'open') return false;
+              if (exempt(pr)) {
+                core.info(`#${pr.number}: exempt — skip rtx5090 gate`);
+                return false;
+              }
+              if (rtx5090Checked(pr.body)) {
+                core.info(`#${pr.number}: RTX 5090 box checked — ok`);
+                return false;
+              }
+
+              const { owner, repo } = context.repo;
+              await github.rest.issues.createComment({
+                owner, repo, issue_number: pr.number,
+                body:
+                  '<!-- sparkinfer-rtx5090-required -->\n' +
+                  '## Closed — RTX 5090 attestation required\n\n' +
+                  'This PR was auto-closed because the **Tested on RTX 5090** checkbox in the ' +
+                  'PR template is not ticked.\n\n' +
+                  'Evaluation is opt-in and proof-gated. To submit for review:\n\n' +
+                  '1. **Edit this PR description** (you can edit while closed): tick ' +
+                  '`- [x] Tested on RTX 5090` — only if you actually ran on a 5090\n' +
+                  '2. Fill the decode and/or prefill **before → after** tables with real ' +
+                  '`bench/scripts/bench.sh` numbers showing improvement\n' +
+                  '3. **Reopen** this PR\n\n' +
+                  'Unchecked PRs stay out of the RTX 5090 eval queue. See ' +
+                  `[CONTRIBUTING.md](https://github.com/${owner}/${repo}/blob/main/CONTRIBUTING.md).\n\n` +
+                  '<sub>Automated by rtx5090-required CI. Maintainers and `hold` PRs are exempt.</sub>',
+              });
+              await github.rest.pulls.update({
+                owner, repo, pull_number: pr.number, state: 'closed',
+              });
+              core.notice(`closed #${pr.number}: RTX 5090 box not checked`);
+              return true;
+            }
+
+            const { owner, repo } = context.repo;
+            const isSweep = context.eventName === 'workflow_dispatch';
+            let closed = 0;
+
+            if (isSweep) {
+              const all = await github.paginate(github.rest.pulls.list, {
+                owner, repo, state: 'open', per_page: 100,
+              });
+              for (const pr of all) {
+                const full = await github.rest.pulls.get({
+                  owner, repo, pull_number: pr.number,
+                });
+                if (await maybeClose(full.data)) closed++;
+              }
+            } else {
+              const num = context.payload.pull_request.number;
+              const full = await github.rest.pulls.get({ owner, repo, pull_number: num });
+              if (await maybeClose(full.data)) closed = 1;
+            }
+
+            core.notice(`rtx5090-required: closed ${closed} PR(s).`);

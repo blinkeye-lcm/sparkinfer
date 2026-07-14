@@ -448,6 +448,10 @@ def _claimed_gain(before, after):
     """True when both numbers are present and after > before."""
     return before is not None and after is not None and after > before
 
+def rtx5090_box_checked(body):
+    """True when the PR template's 'Tested on RTX 5090' checkbox is ticked."""
+    return any(re.search(r"\[\s*[xX]\s*\]", ln) and "5090" in ln for ln in (body or "").splitlines())
+
 def greenlight_status(repo, num, pr_labels):
     """Decide whether a PR may be evaluated. Returns (status, reason):
       'ok'        — greenlit: box ticked + real decode and/or prefill before<after gain
@@ -456,7 +460,7 @@ def greenlight_status(repo, num, pr_labels):
     Checking the box is necessary but NOT sufficient — decode or prefill gain must be claimed."""
     body = (json.loads(gh(["pr", "view", str(num), "-R", repo, "--json", "body"]).stdout or "{}")
             .get("body") or "")
-    if not any(re.search(r"\[\s*[xX]\s*\]", ln) and "5090" in ln for ln in body.splitlines()):
+    if not rtx5090_box_checked(body):
         return "unchecked", "RTX-5090 box unchecked"
     d_before, d_after = _decode_val(body, "before"), _decode_val(body, "after")
     p_before, p_after = _prefill_val(body, "before"), _prefill_val(body, "after")
