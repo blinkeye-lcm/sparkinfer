@@ -11,6 +11,7 @@
 
 #include "sparkinfer/models/qwen35.h"
 #include "qwen35_prefill.h"
+#include "qwen35_prefill_mmq.h"
 #include "sparkinfer/thermal_governor.h"
 #include "sparkinfer/kv_ops.h"
 #include "sparkinfer/gguf.h"
@@ -1145,6 +1146,28 @@ Qwen35Model::BenchDecodeResult Qwen35Model::bench_decode(int warmup, int n, int 
             }
         }
     }
+    // Above the batched cap that path bails to the token loop (its prefill attention is O(N^2)).
+    // The chunked Q4_K tile-GEMM path (qwen35_prefill_mmq.cpp) covers that range instead: it keeps
+    // weights 4-bit and reuses the sparse sink+window attention, so cost stays flat as ctx grows.
+    if (!batched_done && start_pos > qwen35_prefill_mmq_min_ctx() && s.gguf) {
+        // Ingest cost here is data-independent (dense FFN, no expert routing), and the token
+        // loop cannot supply the ids -- it derives each one from an LM head this path skips
+        // for all but the final token. So the pass is timed over a fixed synthetic prompt.
+        std::vector<int> ids(start_pos);
+        for (int i = 0; i < start_pos; i++) ids[i] = 128 + (i % 16384);
+        auto m0 = std::chrono::high_resolution_clock::now();
+        const int seed = qwen35_prefill_mmq_run(s.cfg, s.w, s.kv, s.seq_id, s.lin_state,
+                                                s.lin_conv_state, s.logits, s.d_out_id, s.h_out_id,
+                                                ids.data(), start_pos, s.stream);
+        cudaDeviceSynchronize();
+        auto m1 = std::chrono::high_resolution_clock::now();
+        if (seed >= 0) {
+            out.prefill_pp = start_pos / std::chrono::duration<double>(m1 - m0).count();
+            pos = start_pos;
+            tok = seed;
+            batched_done = true;
+        }
+    }
     if (start_pos > 0 && !batched_done) {
         auto p0 = std::chrono::high_resolution_clock::now();
         for (; pos < start_pos; pos++) {
@@ -1343,13 +1366,23 @@ std::vector<int> Qwen35Model::generate(const std::vector<int>& prompt, int max_n
     int next = reuse ? s.prefix_next : -1;
     const int start = reuse ? s.prefix_len : 0;
     const size_t n = prompt.size();
+    size_t ingested = (size_t)start;
+    // Long prompts are ingested by the chunked Q4_K tile-GEMM path (qwen35_prefill_mmq.cpp).
+    // Only from a cold cache: it starts at token 0 and resets the Gated-DeltaNet state, so a
+    // retained prefix has to stay on the token loop below.
+    if (!reuse && (long)n > (long)qwen35_prefill_mmq_min_ctx() && s.gguf) {
+        const int seed = qwen35_prefill_mmq_run(s.cfg, s.w, s.kv, s.seq_id, s.lin_state,
+                                                s.lin_conv_state, s.logits, s.d_out_id, s.h_out_id,
+                                                prompt.data(), (int)n, s.stream);
+        if (seed >= 0) { next = seed; ingested = n; }
+    }
     if (prefill_samples_lmhead()) {
-        for (size_t i = (size_t)start; i < n; i++)
+        for (size_t i = ingested; i < n; i++)
             next = forward_token(prompt[i], (int)i, true);
     } else {
-        for (size_t i = (size_t)start; i + 1 < n; i++)
+        for (size_t i = ingested; i + 1 < n; i++)
             forward_token(prompt[i], (int)i, false);
-        if (n > (size_t)start)
+        if (n > ingested)
             next = forward_token(prompt.back(), (int)n - 1, true);
     }
     for (int i = 0; i < max_new; i++) {
