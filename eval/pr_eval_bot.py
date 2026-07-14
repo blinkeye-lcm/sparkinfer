@@ -595,6 +595,8 @@ def render(res, oid):
                 rows.append(f"| {title} scored prefill ({pctx} ctx"
                             f"{f' · {plbl}' if plbl else ''}) | {block.get('prefill_tps', '?')} pp tok/s · "
                             f"`eval-prefill:{block.get('prefill_label')}` |")
+            elif block.get("eval_prefill"):
+                rows.append(f"| {title} scored prefill | not measured (0 pp tok/s on all contexts) |")
             rows.append(f"| {title} correctness | top-1 {block.get('top1', 0) * 100:.1f}% · "
                         f"KL {block.get('kl', '?')} |")
             for key, gkey, bkey, lbl in [
@@ -606,24 +608,27 @@ def render(res, oid):
                     ("ctx_65536_tps", "guard_64k_pass", "guard_64k_baseline", "64k-context"),
                     ("ctx_131072_tps", "guard_128k_pass", "guard_128k_baseline", "128k-context")]:
                 tps = block.get(key)
+                if tps is None:
+                    continue
                 if not tps:
                     continue
                 gate = "pass" if block.get(gkey, True) else "fail"
                 base = block.get(bkey) or _GUARD_BASE_FALLBACK.get(bkey, 0)
                 rows.append(f"| {title} {lbl} no-regression gate | {tps} tok/s"
                             f"{f' vs main {base} tok/s' if base else ''} · {gate} |")
-            for key, gkey, bkey, lbl in [
-                    ("ctx_4096_pp_tps", "guard_4k_pp_pass", "guard_4k_pp_baseline", "4k prefill"),
-                    ("ctx_32768_pp_tps", "guard_32k_pp_pass", "guard_32k_pp_baseline", "32k prefill"),
-                    ("ctx_65536_pp_tps", "guard_64k_pp_pass", "guard_64k_pp_baseline", "64k prefill"),
-                    ("ctx_131072_pp_tps", "guard_128k_pp_pass", "guard_128k_pp_baseline", "128k prefill")]:
-                tps = block.get(key)
-                if not tps:
-                    continue
-                gate = "pass" if block.get(gkey, True) else "fail"
-                base = block.get(bkey) or 0
-                rows.append(f"| {title} {lbl} no-regression gate | {tps} pp tok/s"
-                            f"{f' vs main {base} pp tok/s' if base else ''} · {gate} |")
+            if block.get("eval_prefill"):
+                for key, gkey, bkey, lbl in [
+                        ("ctx_4096_pp_tps", "guard_4k_pp_pass", "guard_4k_pp_baseline", "4k prefill"),
+                        ("ctx_32768_pp_tps", "guard_32k_pp_pass", "guard_32k_pp_baseline", "32k prefill"),
+                        ("ctx_65536_pp_tps", "guard_64k_pp_pass", "guard_64k_pp_baseline", "64k prefill"),
+                        ("ctx_131072_pp_tps", "guard_128k_pp_pass", "guard_128k_pp_baseline", "128k prefill")]:
+                    if key not in block and bkey not in block:
+                        continue
+                    tps = block.get(key, 0)
+                    gate = "pass" if block.get(gkey, True) else "fail"
+                    base = block.get(bkey) or 0
+                    rows.append(f"| {title} {lbl} no-regression gate | {tps} pp tok/s"
+                                f"{f' vs main {base} pp tok/s' if base else ''} · {gate} |")
     if not bidir:
         rows += [
             f"| scored decode ({res.get('score_context', 128)} ctx{f' · {ctx_label}' if ctx_label else ''}{f' · {short}' if dual or triple else ''}) | {res.get('tps','?')} tok/s |",

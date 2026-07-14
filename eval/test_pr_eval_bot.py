@@ -131,6 +131,41 @@ class PrEvalBotPolicyTest(unittest.TestCase):
         self.assertIn("`eval-prefill:S`", body)
         self.assertIn("4k prefill no-regression gate", body)
 
+    def test_bidir_qwen35_zero_prefill_render(self):
+        res = {
+            "mode": "bidir",
+            "label": "REJECT",
+            "pass": False,
+            "eval_mode": "longctx",
+            "label_qwen35": "REJECT",
+            "label_qwen36": "REJECT",
+            "pass_qwen35": False,
+            "pass_qwen36": False,
+            "score_qwen35": {
+                "label": "REJECT",
+                "pass": False,
+                "tps": 287.55,
+                "frontier_tps": 285.7,
+                "top1": 0.897,
+                "kl": 0.0425,
+                "score_context": 4096,
+                "best_context_label": "4k-context",
+                "eval_prefill": True,
+                "ctx_4096_pp_tps": 0.0,
+                "ctx_32768_pp_tps": 0.0,
+                "ctx_65536_pp_tps": 0.0,
+                "ctx_131072_pp_tps": 0.0,
+                "guard_4k_pp_baseline": 289.26,
+                "guard_4k_pp_pass": False,
+                "guard_32k_pp_baseline": 285.42,
+                "guard_32k_pp_pass": False,
+            },
+            "score_qwen36": {"label": "REJECT", "pass": False, "tps": 488.0, "top1": 0.92, "kl": 0.04},
+        }
+        body = bot.render(res, "943f58a")
+        self.assertIn("not measured (0 pp tok/s on all contexts)", body)
+        self.assertIn("4k prefill no-regression gate | 0.0 pp tok/s vs main 289.26 pp tok/s · fail", body)
+
     def test_mixed_win_render_keeps_eval_label_and_shows_regression(self):
         res = {
             "label": "S",

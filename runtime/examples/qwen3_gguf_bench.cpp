@@ -86,7 +86,7 @@ int main(int argc, char** argv) {
     printf("max seq      : %d\n", cfg.max_seq);
     printf("decode tg    : %.2f tok/s  (%.1f ms/token, n=%d, ctx=%d, bs=1)\n",
            toks, toks > 0 ? 1000.0 / toks : 0.0, n_tokens, context_tokens);
-    if (context_tokens > 0 && bench.prefill_pp > 0)
+    if (context_tokens > 0)
         printf("prefill pp   : %.2f tok/s  (ctx=%d, sequential KV fill)\n",
                bench.prefill_pp, context_tokens);
     if (gpu.valid && gpu.temp_c >= 0) {

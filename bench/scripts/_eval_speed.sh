@@ -3,11 +3,15 @@
 
 median_bench_metric() {
   local ctx="$1" reps="$2" pat="$3"
-  local vals=() t
+  local vals=() t rc out
   [ "${reps:-0}" -le 0 ] && { echo 0; return; }
   for _ in $(seq 1 "$reps"); do
-    t=$(si_run qwen3_gguf_bench "$GGUF" "$DECODE_TOKENS" "$ctx" 2>/dev/null |
-        sed -n "s/.*${pat} *: *\\([0-9.][0-9.]*\\).*/\\1/p" | tail -1 || true)
+    out="$(si_run qwen3_gguf_bench "$GGUF" "$DECODE_TOKENS" "$ctx" 2>&1)" || rc=$?
+    t=$(printf '%s\n' "$out" | sed -n "s/.*${pat} *: *\\([0-9.][0-9.]*\\).*/\\1/p" | tail -1 || true)
+    if [ "${rc:-0}" != 0 ] || [ -z "$t" ]; then
+      echo ">> WARN: bench metric '${pat}' failed (ctx=$ctx rc=${rc:-0}): ${out##*$'\n'}" >&2
+      t=0
+    fi
     vals+=("${t:-0}")
     gclks+=("$(nvidia-smi --query-gpu=clocks.gr --format=csv,noheader,nounits 2>/dev/null | head -1 | tr -d ' ')")
   done
