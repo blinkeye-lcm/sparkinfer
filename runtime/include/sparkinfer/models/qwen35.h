@@ -86,11 +86,30 @@ public:
 
     // Greedy generate: prompt token ids -> generated token ids (host). An optional ThermalGovernor
     // paces decode under thermal pressure (accuracy-preserving); nullptr = full speed, no overhead.
+    // When a prefix cache is installed (cache_prefix), skips re-prefilling the matching prefix.
     std::vector<int> generate(const std::vector<int>& prompt_ids, int max_new_tokens,
                               ThermalGovernor* gov = nullptr);
 
-    // Run one token at `position`, return the argmax next-token id.
-    int forward_token(int token_id, int position);
+    // Prefill `tokens` and retain KV + hybrid recurrent state for reuse on the next request
+    // whose prompt starts with the same token sequence. Returns false on allocation failure.
+    bool cache_prefix(const std::vector<int>& tokens);
+
+    // Drop the installed prefix cache and free its KV blocks.
+    void clear_prefix_cache();
+
+    // Length of the currently cached prefix (0 if none).
+    int prefix_cached_len() const;
+
+    // Time-to-first-token: ingest `prompt` with prefill (no LM head on interior tokens when
+    // not legacy), then one sampled forward. Reuses cache_prefix when the prompt starts with
+    // the cached tokens (only the suffix is prefilled). Returns seconds.
+    double bench_ttft(const std::vector<int>& prompt);
+
+    // Run one token at `position`. When sample=false (prefill), runs embed→layers→final
+    // norm without LM head/argmax and without CUDA-graph capture — teacher-forced ingestion.
+    // When sample=true (decode / last prompt token), runs the full path and may capture/replay
+    // the decode graph. Returns argmax next-token id when sample=true, else token_id.
+    int forward_token(int token_id, int position, bool sample = true);
 
     // Copy the most recent step's logits (vocab floats) to host. Valid after a
     // forward_token() call. Used for teacher-forced scoring (perplexity / KL).
@@ -106,6 +125,9 @@ public:
     const Qwen35Config& config() const;
 
 private:
+    void invalidate_decode_graph();
+    bool prompt_matches_prefix(const std::vector<int>& prompt) const;
+
     struct Impl;
     Impl* p_;
 };
