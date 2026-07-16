@@ -103,8 +103,12 @@ __global__ void rmsnorm_kernel(const __nv_bfloat16* __restrict__ x,
     }
 }
 
-SPARKINFER_KERNEL_INST(template __global__ void rmsnorm_kernel<0>(const __nv_bfloat16*, const __nv_bfloat16*, const __nv_bfloat16*, __nv_bfloat16*, int, int, float);)
-SPARKINFER_KERNEL_INST(template __global__ void rmsnorm_kernel<1>(const __nv_bfloat16*, const __nv_bfloat16*, const __nv_bfloat16*, __nv_bfloat16*, int, int, float);)
+#ifndef _MSC_VER
+template __global__ void rmsnorm_kernel<0>(const __nv_bfloat16*, const __nv_bfloat16*, const __nv_bfloat16*, __nv_bfloat16*, int, int, float);
+#endif
+#ifndef _MSC_VER
+template __global__ void rmsnorm_kernel<1>(const __nv_bfloat16*, const __nv_bfloat16*, const __nv_bfloat16*, __nv_bfloat16*, int, int, float);
+#endif
 // Fused residual + RMSNorm that ALSO emits the residual sum:
 //   sum = x + residual;  norm = (sum / rms(sum)) * weight
 // One kernel replaces a residual_add + a rmsnorm (and keeps `sum` for the next

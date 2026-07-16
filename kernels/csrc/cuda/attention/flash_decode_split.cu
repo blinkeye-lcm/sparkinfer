@@ -354,35 +354,69 @@ __global__ void fa_combine_gated_q8_kernel(
 #ifndef FA_GQA4_TILE
 #define FA_GQA4_TILE 8     // Qwythos hd256 GQA-4 (16Q/4KV); independently sweepable
 #endif
-SPARKINFER_KERNEL_INST(template __global__ void fa_split_kernel<128>(const __nv_bfloat16*, const void*, const void*,
-    const int*, const int*, float*, float*, float*, float, int, int, int, int, int, const __half*, const __half*, int);)
-SPARKINFER_KERNEL_INST(template __global__ void fa_split_gqa_kernel<128, 8, FA_GQA_TILE, false>(const __nv_bfloat16*, const void*, const void*,
-    const int*, const int*, float*, float*, float*, float, int, int, int, int, int, const __half*, const __half*);)
-SPARKINFER_KERNEL_INST(template __global__ void fa_split_gqa_kernel<128, 8, FA_GQA_TILE, true>(const __nv_bfloat16*, const void*, const void*,
-    const int*, const int*, float*, float*, float*, float, int, int, int, int, int, const __half*, const __half*);)
-SPARKINFER_KERNEL_INST(template __global__ void fa_combine_kernel<128, FA_COMBINE_DG, FA_COMBINE_NW>(const float*, const float*, const float*, __nv_bfloat16*, int, int, fa_block_q8_1*);)
-SPARKINFER_KERNEL_INST(template __global__ void fa_combine_kernel<128, FA_COMBINE_DG, 8>(const float*, const float*, const float*, __nv_bfloat16*, int, int, fa_block_q8_1*);)
-SPARKINFER_KERNEL_INST(template __global__ void fa_combine_kernel<128, FA_COMBINE_DG, 16>(const float*, const float*, const float*, __nv_bfloat16*, int, int, fa_block_q8_1*);)
+#ifndef _MSC_VER
+template __global__ void fa_split_kernel<128>(const __nv_bfloat16*, const void*, const void*,
+    const int*, const int*, float*, float*, float*, float, int, int, int, int, int, const __half*, const __half*, int);
+#endif
+#ifndef _MSC_VER
+template __global__ void fa_split_gqa_kernel<128, 8, FA_GQA_TILE, false>(const __nv_bfloat16*, const void*, const void*,
+    const int*, const int*, float*, float*, float*, float, int, int, int, int, int, const __half*, const __half*);
+#endif
+#ifndef _MSC_VER
+template __global__ void fa_split_gqa_kernel<128, 8, FA_GQA_TILE, true>(const __nv_bfloat16*, const void*, const void*,
+    const int*, const int*, float*, float*, float*, float, int, int, int, int, int, const __half*, const __half*);
+#endif
+#ifndef _MSC_VER
+template __global__ void fa_combine_kernel<128, FA_COMBINE_DG, FA_COMBINE_NW>(const float*, const float*, const float*, __nv_bfloat16*, int, int, fa_block_q8_1*);
+#endif
+#ifndef _MSC_VER
+template __global__ void fa_combine_kernel<128, FA_COMBINE_DG, 8>(const float*, const float*, const float*, __nv_bfloat16*, int, int, fa_block_q8_1*);
+#endif
+#ifndef _MSC_VER
+template __global__ void fa_combine_kernel<128, FA_COMBINE_DG, 16>(const float*, const float*, const float*, __nv_bfloat16*, int, int, fa_block_q8_1*);
+#endif
 // Qwen3.6 full-attention head_dim=256 (bf16 KV): GQA-8 split + scalar fallback.
-SPARKINFER_KERNEL_INST(template __global__ void fa_split_kernel<256>(const __nv_bfloat16*, const void*, const void*,
-    const int*, const int*, float*, float*, float*, float, int, int, int, int, int, const __half*, const __half*, int);)
-SPARKINFER_KERNEL_INST(template __global__ void fa_split_gqa_kernel<256, 8, FA_GQA_TILE, false>(const __nv_bfloat16*, const void*, const void*,
-    const int*, const int*, float*, float*, float*, float, int, int, int, int, int, const __half*, const __half*);)
-SPARKINFER_KERNEL_INST(template __global__ void fa_split_gqa_kernel<256, 8, FA_GQA_TILE, true>(const __nv_bfloat16*, const void*, const void*,
-    const int*, const int*, float*, float*, float*, float, int, int, int, int, int, const __half*, const __half*);)
-SPARKINFER_KERNEL_INST(template __global__ void fa_split_gqa_kernel<256, 4, FA_GQA4_TILE, false>(const __nv_bfloat16*, const void*, const void*,
-    const int*, const int*, float*, float*, float*, float, int, int, int, int, int, const __half*, const __half*);)
-SPARKINFER_KERNEL_INST(template __global__ void fa_split_gqa_kernel<256, 4, FA_GQA4_TILE, true>(const __nv_bfloat16*, const void*, const void*,
-    const int*, const int*, float*, float*, float*, float, int, int, int, int, int, const __half*, const __half*);)
-SPARKINFER_KERNEL_INST(template __global__ void fa_combine_kernel<256, FA_COMBINE_DG, FA_COMBINE_NW>(const float*, const float*, const float*, __nv_bfloat16*, int, int, fa_block_q8_1*);)
-SPARKINFER_KERNEL_INST(template __global__ void fa_combine_kernel<256, FA_COMBINE_DG, 8>(const float*, const float*, const float*, __nv_bfloat16*, int, int, fa_block_q8_1*);)
-SPARKINFER_KERNEL_INST(template __global__ void fa_combine_kernel<256, FA_COMBINE_DG, 16>(const float*, const float*, const float*, __nv_bfloat16*, int, int, fa_block_q8_1*);)
-SPARKINFER_KERNEL_INST(template __global__ void fa_combine_gated_q8_kernel<256, FA_COMBINE_DG, FA_COMBINE_NW>(
-    const float*, const float*, const float*, __nv_bfloat16*, const __nv_bfloat16*, int, int, fa_block_q8_1*);)
-SPARKINFER_KERNEL_INST(template __global__ void fa_combine_gated_q8_kernel<256, FA_COMBINE_DG, 8>(
-    const float*, const float*, const float*, __nv_bfloat16*, const __nv_bfloat16*, int, int, fa_block_q8_1*);)
-SPARKINFER_KERNEL_INST(template __global__ void fa_combine_gated_q8_kernel<256, FA_COMBINE_DG, 16>(
-    const float*, const float*, const float*, __nv_bfloat16*, const __nv_bfloat16*, int, int, fa_block_q8_1*);)
+#ifndef _MSC_VER
+template __global__ void fa_split_kernel<256>(const __nv_bfloat16*, const void*, const void*,
+    const int*, const int*, float*, float*, float*, float, int, int, int, int, int, const __half*, const __half*, int);
+#endif
+#ifndef _MSC_VER
+template __global__ void fa_split_gqa_kernel<256, 8, FA_GQA_TILE, false>(const __nv_bfloat16*, const void*, const void*,
+    const int*, const int*, float*, float*, float*, float, int, int, int, int, int, const __half*, const __half*);
+#endif
+#ifndef _MSC_VER
+template __global__ void fa_split_gqa_kernel<256, 8, FA_GQA_TILE, true>(const __nv_bfloat16*, const void*, const void*,
+    const int*, const int*, float*, float*, float*, float, int, int, int, int, int, const __half*, const __half*);
+#endif
+#ifndef _MSC_VER
+template __global__ void fa_split_gqa_kernel<256, 4, FA_GQA4_TILE, false>(const __nv_bfloat16*, const void*, const void*,
+    const int*, const int*, float*, float*, float*, float, int, int, int, int, int, const __half*, const __half*);
+#endif
+#ifndef _MSC_VER
+template __global__ void fa_split_gqa_kernel<256, 4, FA_GQA4_TILE, true>(const __nv_bfloat16*, const void*, const void*,
+    const int*, const int*, float*, float*, float*, float, int, int, int, int, int, const __half*, const __half*);
+#endif
+#ifndef _MSC_VER
+template __global__ void fa_combine_kernel<256, FA_COMBINE_DG, FA_COMBINE_NW>(const float*, const float*, const float*, __nv_bfloat16*, int, int, fa_block_q8_1*);
+#endif
+#ifndef _MSC_VER
+template __global__ void fa_combine_kernel<256, FA_COMBINE_DG, 8>(const float*, const float*, const float*, __nv_bfloat16*, int, int, fa_block_q8_1*);
+#endif
+#ifndef _MSC_VER
+template __global__ void fa_combine_kernel<256, FA_COMBINE_DG, 16>(const float*, const float*, const float*, __nv_bfloat16*, int, int, fa_block_q8_1*);
+#endif
+#ifndef _MSC_VER
+template __global__ void fa_combine_gated_q8_kernel<256, FA_COMBINE_DG, FA_COMBINE_NW>(
+    const float*, const float*, const float*, __nv_bfloat16*, const __nv_bfloat16*, int, int, fa_block_q8_1*);
+#endif
+#ifndef _MSC_VER
+template __global__ void fa_combine_gated_q8_kernel<256, FA_COMBINE_DG, 8>(
+    const float*, const float*, const float*, __nv_bfloat16*, const __nv_bfloat16*, int, int, fa_block_q8_1*);
+#endif
+#ifndef _MSC_VER
+template __global__ void fa_combine_gated_q8_kernel<256, FA_COMBINE_DG, 16>(
+    const float*, const float*, const float*, __nv_bfloat16*, const __nv_bfloat16*, int, int, fa_block_q8_1*);
+#endif
 #ifndef SPARKINFER_NVRTC_DEVICE_ONLY
 #include "sparkinfer/kernels/attention.h"
 #include <mma.h>
@@ -561,19 +595,25 @@ __global__ void __launch_bounds__(fa_mma_block_threads<HEAD_DIM, GQA>::v, 5) fa_
             part_acc[(size_t)idx * HEAD_DIM + c] = s_o[r * HEAD_DIM + c];
     }
 }
-SPARKINFER_KERNEL_INST(template __global__ void fa_split_gqa_mma_i8_kernel<128, 8>(const __nv_bfloat16*, const signed char*,
+#ifndef _MSC_VER
+template __global__ void fa_split_gqa_mma_i8_kernel<128, 8>(const __nv_bfloat16*, const signed char*,
     const signed char*, const int*, const int*, float*, float*, float*, float, int, int, int, int, int,
-    const __half*, const __half*);)
+    const __half*, const __half*);
+#endif
 // Qwen3.6 full-attention head_dim=256 (hybrid). The kernel is HEAD_DIM-generic (KH=HEAD_DIM/16); this
 // instantiation moves the 10 full-attn layers onto int8-KV tensor cores, halving their KV read at
 // long context. i8 smem = ~33 KB (< 48 KB dynamic cap; 5 blocks/SM fits the 5090's ~228 KB).
-SPARKINFER_KERNEL_INST(template __global__ void fa_split_gqa_mma_i8_kernel<256, 8>(const __nv_bfloat16*, const signed char*,
+#ifndef _MSC_VER
+template __global__ void fa_split_gqa_mma_i8_kernel<256, 8>(const __nv_bfloat16*, const signed char*,
     const signed char*, const int*, const int*, float*, float*, float*, float, int, int, int, int, int,
-    const __half*, const __half*);)
+    const __half*, const __half*);
+#endif
 // Qwythos full-attn: 16Q/4KV hd256 — same MMA kernel, 8 warps for 128-wide KV groups.
-SPARKINFER_KERNEL_INST(template __global__ void fa_split_gqa_mma_i8_kernel<256, 4>(const __nv_bfloat16*, const signed char*,
+#ifndef _MSC_VER
+template __global__ void fa_split_gqa_mma_i8_kernel<256, 4>(const __nv_bfloat16*, const signed char*,
     const signed char*, const int*, const int*, float*, float*, float*, float, int, int, int, int, int,
-    const __half*, const __half*);)
+    const __half*, const __half*);
+#endif
 template <int NW>
 static inline void fa_launch_combine(
     const float* part_m, const float* part_l, const float* part_acc,

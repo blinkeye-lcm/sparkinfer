@@ -104,9 +104,11 @@ __global__ void flash_decode_global_kernel(
     for (int e = 0; e < ELEMS; e++) op[lane + e * 32] = __float2bfloat16(acc[e] * inv_l);
 }
 
-SPARKINFER_KERNEL_INST(template __global__ void flash_decode_global_kernel<512, 8, 16>(
+#ifndef _MSC_VER
+template __global__ void flash_decode_global_kernel<512, 8, 16>(
     const __nv_bfloat16*, const __nv_bfloat16*, const __nv_bfloat16*,
-    const int*, const int*, __nv_bfloat16*, float, int, int, int);)
+    const int*, const int*, __nv_bfloat16*, float, int, int, int);
+#endif
 #ifndef SPARKINFER_NVRTC_DEVICE_ONLY
 void launch_flash_decode_global_hd512(
     const void* q, const void* k_pool, const void* v_pool,

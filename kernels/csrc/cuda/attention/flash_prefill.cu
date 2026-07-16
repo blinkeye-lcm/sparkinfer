@@ -72,9 +72,15 @@ __global__ void flash_prefill_kernel(
     for (int e = 0; e < ELEMS; e++) out[q_off + lane + e * 32] = __float2bfloat16(acc[e] * inv_l);
 }
 
-SPARKINFER_KERNEL_INST(template __global__ void flash_prefill_kernel<64> (const __nv_bfloat16*, const __nv_bfloat16*, const __nv_bfloat16*, __nv_bfloat16*, float, int, int, int, int, int);)
-SPARKINFER_KERNEL_INST(template __global__ void flash_prefill_kernel<128>(const __nv_bfloat16*, const __nv_bfloat16*, const __nv_bfloat16*, __nv_bfloat16*, float, int, int, int, int, int);)
-SPARKINFER_KERNEL_INST(template __global__ void flash_prefill_kernel<256>(const __nv_bfloat16*, const __nv_bfloat16*, const __nv_bfloat16*, __nv_bfloat16*, float, int, int, int, int, int);)
+#ifndef _MSC_VER
+template __global__ void flash_prefill_kernel<64> (const __nv_bfloat16*, const __nv_bfloat16*, const __nv_bfloat16*, __nv_bfloat16*, float, int, int, int, int, int);
+#endif
+#ifndef _MSC_VER
+template __global__ void flash_prefill_kernel<128>(const __nv_bfloat16*, const __nv_bfloat16*, const __nv_bfloat16*, __nv_bfloat16*, float, int, int, int, int, int);
+#endif
+#ifndef _MSC_VER
+template __global__ void flash_prefill_kernel<256>(const __nv_bfloat16*, const __nv_bfloat16*, const __nv_bfloat16*, __nv_bfloat16*, float, int, int, int, int, int);
+#endif
 #ifndef SPARKINFER_NVRTC_DEVICE_ONLY
 template <int HEAD_DIM>
 static void pf_dispatch(const void* q, const void* k, const void* v, void* out,

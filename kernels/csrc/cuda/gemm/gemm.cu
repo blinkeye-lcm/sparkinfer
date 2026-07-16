@@ -46,7 +46,9 @@ __global__ void gemm_kernel(
     }
 }
 
-SPARKINFER_KERNEL_INST(template __global__ void gemm_kernel<16>(const __nv_bfloat16*, const __nv_bfloat16*, __nv_bfloat16*, int, int, int, float, float);)
+#ifndef _MSC_VER
+template __global__ void gemm_kernel<16>(const __nv_bfloat16*, const __nv_bfloat16*, __nv_bfloat16*, int, int, int, float, float);
+#endif
 // fp32-output variant for logit projections (LM head).
 template <int TILE>
 __global__ void gemm_f32_kernel(
@@ -71,7 +73,9 @@ __global__ void gemm_f32_kernel(
     if (row < M && col < N) C[(size_t)row * N + col] = acc;
 }
 
-SPARKINFER_KERNEL_INST(template __global__ void gemm_f32_kernel<16>(const __nv_bfloat16*, const __nv_bfloat16*, float*, int, int, int);)
+#ifndef _MSC_VER
+template __global__ void gemm_f32_kernel<16>(const __nv_bfloat16*, const __nv_bfloat16*, float*, int, int, int);
+#endif
 #ifndef SPARKINFER_NVRTC_DEVICE_ONLY
 void launch_gemm(
     const void* A, const void* B, void* C,

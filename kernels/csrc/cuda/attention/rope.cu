@@ -237,12 +237,16 @@ __global__ void qknorm_rope_kv_kernel(
         if (t == 0) k_scale[ctok * n_kv_heads + head] = __float2half(d);
     }
 }
-SPARKINFER_KERNEL_INST(template __global__ void qknorm_rope_kv_kernel<false>(
+#ifndef _MSC_VER
+template __global__ void qknorm_rope_kv_kernel<false>(
     __nv_bfloat16*, __nv_bfloat16*, const __nv_bfloat16*, const __nv_bfloat16*, const __nv_bfloat16*,
-    void*, void*, __half*, __half*, const int*, const int*, int, int, int, float, int, int, float);)
-SPARKINFER_KERNEL_INST(template __global__ void qknorm_rope_kv_kernel<true>(
+    void*, void*, __half*, __half*, const int*, const int*, int, int, int, float, int, int, float);
+#endif
+#ifndef _MSC_VER
+template __global__ void qknorm_rope_kv_kernel<true>(
     __nv_bfloat16*, __nv_bfloat16*, const __nv_bfloat16*, const __nv_bfloat16*, const __nv_bfloat16*,
-    void*, void*, __half*, __half*, const int*, const int*, int, int, int, float, int, int, float);)
+    void*, void*, __half*, __half*, const int*, const int*, int, int, int, float, int, int, float);
+#endif
 // Fused QK-norm + partial-RoPE + KV-append for Qwen3.6 (rope_dim < head_dim). One kernel per head
 // replaces launch_rmsnorm_qk + launch_rope_kv_append_partial on the 10 full-attn layers.
 __global__ void qknorm_rope_kv_partial_kernel(

@@ -109,6 +109,7 @@ jobs:
         run: |
           cmake -S . -B build -G "Visual Studio 17 2022" -A x64 `
             -DCMAKE_CUDA_ARCHITECTURES="${{ env.CUDA_ARCH }}" `
+            -DCMAKE_CUDA_RUNTIME_LIBRARY=Shared `
             -DBUILD_TESTS=OFF `
             -DBUILD_EXAMPLES=ON
 

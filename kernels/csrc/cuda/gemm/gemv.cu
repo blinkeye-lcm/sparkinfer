@@ -51,8 +51,12 @@ __global__ void gemv_kernel(const __nv_bfloat16* __restrict__ x,
     if (lane == 0) gemv_write(y + n, acc);
 }
 
-SPARKINFER_KERNEL_INST(template __global__ void gemv_kernel<__nv_bfloat16>(const __nv_bfloat16*, const __nv_bfloat16*, __nv_bfloat16*, int, int);)
-SPARKINFER_KERNEL_INST(template __global__ void gemv_kernel<float>(const __nv_bfloat16*, const __nv_bfloat16*, float*, int, int);)
+#ifndef _MSC_VER
+template __global__ void gemv_kernel<__nv_bfloat16>(const __nv_bfloat16*, const __nv_bfloat16*, __nv_bfloat16*, int, int);
+#endif
+#ifndef _MSC_VER
+template __global__ void gemv_kernel<float>(const __nv_bfloat16*, const __nv_bfloat16*, float*, int, int);
+#endif
 // split-K bf16 GEMV for small N (the router projection: N = n_experts). One-warp-per-row leaves
 // the GPU idle at N=128, so the read runs far below the bandwidth roofline. S warps cooperate per
 // output row (each sums a 1/S stride of the K reduction, S-way shared reduce). The activation is
@@ -94,11 +98,19 @@ __global__ void gemv_f32_sk_kernel(const __nv_bfloat16* __restrict__ x,
         gemv_write(y + n, o);
     }
 }
-SPARKINFER_KERNEL_INST(template __global__ void gemv_f32_sk_kernel<float, 4>(const __nv_bfloat16*, const __nv_bfloat16*, float*, int, int);)
+#ifndef _MSC_VER
+template __global__ void gemv_f32_sk_kernel<float, 4>(const __nv_bfloat16*, const __nv_bfloat16*, float*, int, int);
+#endif
 // bf16-output split-K instantiations for the dense projection GEMV (launch_gemv occupancy path).
-SPARKINFER_KERNEL_INST(template __global__ void gemv_f32_sk_kernel<__nv_bfloat16, 2>(const __nv_bfloat16*, const __nv_bfloat16*, __nv_bfloat16*, int, int);)
-SPARKINFER_KERNEL_INST(template __global__ void gemv_f32_sk_kernel<__nv_bfloat16, 4>(const __nv_bfloat16*, const __nv_bfloat16*, __nv_bfloat16*, int, int);)
-SPARKINFER_KERNEL_INST(template __global__ void gemv_f32_sk_kernel<__nv_bfloat16, 8>(const __nv_bfloat16*, const __nv_bfloat16*, __nv_bfloat16*, int, int);)
+#ifndef _MSC_VER
+template __global__ void gemv_f32_sk_kernel<__nv_bfloat16, 2>(const __nv_bfloat16*, const __nv_bfloat16*, __nv_bfloat16*, int, int);
+#endif
+#ifndef _MSC_VER
+template __global__ void gemv_f32_sk_kernel<__nv_bfloat16, 4>(const __nv_bfloat16*, const __nv_bfloat16*, __nv_bfloat16*, int, int);
+#endif
+#ifndef _MSC_VER
+template __global__ void gemv_f32_sk_kernel<__nv_bfloat16, 8>(const __nv_bfloat16*, const __nv_bfloat16*, __nv_bfloat16*, int, int);
+#endif
 // ---- quantized on-read GEMV (W = GGUF-native Q4_K/Q6_K [N,K]) -----------------
 // Dequantizes each 256-block in registers and dots with a full-precision (fp32)
 // activation — reads the quantized weight bytes (~4x less than bf16) with NO int8
@@ -169,8 +181,12 @@ __global__ void gemv_q_kernel(const __nv_bfloat16* __restrict__ x,
     if (lane == 0) gemv_write(y + n, acc);
 }
 
-SPARKINFER_KERNEL_INST(template __global__ void gemv_q_kernel<__nv_bfloat16>(const __nv_bfloat16*, const unsigned char*, __nv_bfloat16*, int, int, int);)
-SPARKINFER_KERNEL_INST(template __global__ void gemv_q_kernel<float>(const __nv_bfloat16*, const unsigned char*, float*, int, int, int);)
+#ifndef _MSC_VER
+template __global__ void gemv_q_kernel<__nv_bfloat16>(const __nv_bfloat16*, const unsigned char*, __nv_bfloat16*, int, int, int);
+#endif
+#ifndef _MSC_VER
+template __global__ void gemv_q_kernel<float>(const __nv_bfloat16*, const unsigned char*, float*, int, int, int);
+#endif
 // ---- Q8_0 on-read GEMV (W = Q8_0 [N,K]) ------------------------------------
 // Q8_0 block = 34 B / 32 values: one fp16 scale d, then 32 signed int8.
 // Dequant-on-read (d*int8) dotted with the fp32 activation — reads the int8
@@ -198,8 +214,12 @@ __global__ void gemv_q80_kernel(const __nv_bfloat16* __restrict__ x,
     for (int m = 16; m > 0; m >>= 1) acc += __shfl_xor_sync(0xffffffff, acc, m);
     if (lane == 0) gemv_write(y + n, acc);
 }
-SPARKINFER_KERNEL_INST(template __global__ void gemv_q80_kernel<__nv_bfloat16>(const __nv_bfloat16*, const unsigned char*, __nv_bfloat16*, int, int);)
-SPARKINFER_KERNEL_INST(template __global__ void gemv_q80_kernel<float>(const __nv_bfloat16*, const unsigned char*, float*, int, int);)
+#ifndef _MSC_VER
+template __global__ void gemv_q80_kernel<__nv_bfloat16>(const __nv_bfloat16*, const unsigned char*, __nv_bfloat16*, int, int);
+#endif
+#ifndef _MSC_VER
+template __global__ void gemv_q80_kernel<float>(const __nv_bfloat16*, const unsigned char*, float*, int, int);
+#endif
 // split-K Q8_0 GEMV: S warps cooperate per output row, each summing a 1/S stride
 // of the K reduction. Same occupancy lever as the bf16 split-K kernel (gemv_f32_sk_kernel)
 // but reads Q8_0 int8 weights (2x less than bf16). Each lane processes 8 blocks per
@@ -253,12 +273,24 @@ __global__ void gemv_q80_sk_kernel(const __nv_bfloat16* __restrict__ x,
         gemv_write(y + n, o);
     }
 }
-SPARKINFER_KERNEL_INST(template __global__ void gemv_q80_sk_kernel<__nv_bfloat16, 2>(const __nv_bfloat16*, const unsigned char*, __nv_bfloat16*, int, int);)
-SPARKINFER_KERNEL_INST(template __global__ void gemv_q80_sk_kernel<__nv_bfloat16, 4>(const __nv_bfloat16*, const unsigned char*, __nv_bfloat16*, int, int);)
-SPARKINFER_KERNEL_INST(template __global__ void gemv_q80_sk_kernel<__nv_bfloat16, 8>(const __nv_bfloat16*, const unsigned char*, __nv_bfloat16*, int, int);)
-SPARKINFER_KERNEL_INST(template __global__ void gemv_q80_sk_kernel<float, 2>(const __nv_bfloat16*, const unsigned char*, float*, int, int);)
-SPARKINFER_KERNEL_INST(template __global__ void gemv_q80_sk_kernel<float, 4>(const __nv_bfloat16*, const unsigned char*, float*, int, int);)
-SPARKINFER_KERNEL_INST(template __global__ void gemv_q80_sk_kernel<float, 8>(const __nv_bfloat16*, const unsigned char*, float*, int, int);)
+#ifndef _MSC_VER
+template __global__ void gemv_q80_sk_kernel<__nv_bfloat16, 2>(const __nv_bfloat16*, const unsigned char*, __nv_bfloat16*, int, int);
+#endif
+#ifndef _MSC_VER
+template __global__ void gemv_q80_sk_kernel<__nv_bfloat16, 4>(const __nv_bfloat16*, const unsigned char*, __nv_bfloat16*, int, int);
+#endif
+#ifndef _MSC_VER
+template __global__ void gemv_q80_sk_kernel<__nv_bfloat16, 8>(const __nv_bfloat16*, const unsigned char*, __nv_bfloat16*, int, int);
+#endif
+#ifndef _MSC_VER
+template __global__ void gemv_q80_sk_kernel<float, 2>(const __nv_bfloat16*, const unsigned char*, float*, int, int);
+#endif
+#ifndef _MSC_VER
+template __global__ void gemv_q80_sk_kernel<float, 4>(const __nv_bfloat16*, const unsigned char*, float*, int, int);
+#endif
+#ifndef _MSC_VER
+template __global__ void gemv_q80_sk_kernel<float, 8>(const __nv_bfloat16*, const unsigned char*, float*, int, int);
+#endif
 // ---- faithful llama.cpp int8 MMVQ for a dense Q4_K [N,K] GEMV --------------------
 // Quantizes the activation to Q8_1 (int8 + per-32 scale + sum) once per token, then
 // dp4a's the Q4_K weight nibbles against it — the same vec_dot_q4_K_q8_1 math llama.cpp
@@ -315,8 +347,12 @@ __global__ void gemv_q_dp4a_kernel(const __nv_bfloat16* __restrict__ x,
     if (lane == 0) gemv_write(y + n, acc);
 }
 
-SPARKINFER_KERNEL_INST(template __global__ void gemv_q_dp4a_kernel<__nv_bfloat16>(const __nv_bfloat16*, const unsigned char*, __nv_bfloat16*, int, int);)
-SPARKINFER_KERNEL_INST(template __global__ void gemv_q_dp4a_kernel<float>(const __nv_bfloat16*, const unsigned char*, float*, int, int);)
+#ifndef _MSC_VER
+template __global__ void gemv_q_dp4a_kernel<__nv_bfloat16>(const __nv_bfloat16*, const unsigned char*, __nv_bfloat16*, int, int);
+#endif
+#ifndef _MSC_VER
+template __global__ void gemv_q_dp4a_kernel<float>(const __nv_bfloat16*, const unsigned char*, float*, int, int);
+#endif
 // ---- pre-quantized activation Q8_1 + dp4a GEMV (kills per-block re-quantization) --
 // gemv_q_dp4a_kernel re-quantizes the SAME activation to Q8_1 in EVERY block (256x for
 // a 2048-row projection). When several GEMVs share an activation (Q/K/V all read xn) it
@@ -375,8 +411,12 @@ __global__ void gemv_q4k_dp4a_pq_kernel(const signed char* __restrict__ q8,
     if (lane == 0) gemv_write(y + n, acc);
 }
 
-SPARKINFER_KERNEL_INST(template __global__ void gemv_q4k_dp4a_pq_kernel<__nv_bfloat16>(const signed char*, const float*, const float*, const unsigned char*, __nv_bfloat16*, int, int);)
-SPARKINFER_KERNEL_INST(template __global__ void gemv_q4k_dp4a_pq_kernel<float>(const signed char*, const float*, const float*, const unsigned char*, float*, int, int);)
+#ifndef _MSC_VER
+template __global__ void gemv_q4k_dp4a_pq_kernel<__nv_bfloat16>(const signed char*, const float*, const float*, const unsigned char*, __nv_bfloat16*, int, int);
+#endif
+#ifndef _MSC_VER
+template __global__ void gemv_q4k_dp4a_pq_kernel<float>(const signed char*, const float*, const float*, const unsigned char*, float*, int, int);
+#endif
 // ---- split-K variant of the pre-quantized dp4a GEMV (occupancy lever) -------------
 // ncu: the one-warp-per-row dp4a GEMV is occupancy-bound (~47%) — a 4096-row projection
 // is only 4096 warps, under-filling the GPU. S warps cooperate per output row (each does
@@ -427,8 +467,12 @@ __global__ void gemv_q4k_dp4a_sk_kernel(const signed char* __restrict__ q8,
     }
 }
 
-SPARKINFER_KERNEL_INST(template __global__ void gemv_q4k_dp4a_sk_kernel<__nv_bfloat16>(const signed char*, const float*, const float*, const unsigned char*, __nv_bfloat16*, int, int);)
-SPARKINFER_KERNEL_INST(template __global__ void gemv_q4k_dp4a_sk_kernel<float>(const signed char*, const float*, const float*, const unsigned char*, float*, int, int);)
+#ifndef _MSC_VER
+template __global__ void gemv_q4k_dp4a_sk_kernel<__nv_bfloat16>(const signed char*, const float*, const float*, const unsigned char*, __nv_bfloat16*, int, int);
+#endif
+#ifndef _MSC_VER
+template __global__ void gemv_q4k_dp4a_sk_kernel<float>(const signed char*, const float*, const float*, const unsigned char*, float*, int, int);
+#endif
 // ===== faithful llama.cpp Q4_K mul_mat_vec_q port (block_q8_1 activation + vec_dot) =====
 // Replicates ggml-cuda's mmvq exactly for decode (ncols=1): nwarps=4 cooperate on one row,
 // vdr=2 ints/thread (16 threads/superblock), block_q8_1 interleaved activation, and llama's
@@ -511,8 +555,12 @@ __global__ void si_mmvq_q4k_kernel(const si_block_q8_1* __restrict__ vy, const u
     if (lane == 0) gemv_write(y + row, tmp);
 }
 
-SPARKINFER_KERNEL_INST(template __global__ void si_mmvq_q4k_kernel<__nv_bfloat16>(const si_block_q8_1*, const unsigned char*, __nv_bfloat16*, int, int);)
-SPARKINFER_KERNEL_INST(template __global__ void si_mmvq_q4k_kernel<float>(const si_block_q8_1*, const unsigned char*, float*, int, int);)
+#ifndef _MSC_VER
+template __global__ void si_mmvq_q4k_kernel<__nv_bfloat16>(const si_block_q8_1*, const unsigned char*, __nv_bfloat16*, int, int);
+#endif
+#ifndef _MSC_VER
+template __global__ void si_mmvq_q4k_kernel<float>(const si_block_q8_1*, const unsigned char*, float*, int, int);
+#endif
 // ---- faithful llama.cpp Q8_0 x Q8_1 dp4a mmvq (weights stay int8, no bf16 expansion) ----
 // Q8_0 blocks are 34 B (2-byte aligned only); read via explicit byte offsets like Q6_K.
 __device__ __forceinline__ float si_q80_h2f(const unsigned char* p) {
@@ -552,8 +600,12 @@ __global__ void si_mmvq_q80_kernel(const si_block_q8_1* __restrict__ vy, const u
     for (int m = 16; m > 0; m >>= 1) tmp += __shfl_xor_sync(0xffffffff, tmp, m);
     if (lane == 0) gemv_write(y + row, tmp);
 }
-SPARKINFER_KERNEL_INST(template __global__ void si_mmvq_q80_kernel<__nv_bfloat16>(const si_block_q8_1*, const unsigned char*, __nv_bfloat16*, int, int);)
-SPARKINFER_KERNEL_INST(template __global__ void si_mmvq_q80_kernel<float>(const si_block_q8_1*, const unsigned char*, float*, int, int);)
+#ifndef _MSC_VER
+template __global__ void si_mmvq_q80_kernel<__nv_bfloat16>(const si_block_q8_1*, const unsigned char*, __nv_bfloat16*, int, int);
+#endif
+#ifndef _MSC_VER
+template __global__ void si_mmvq_q80_kernel<float>(const si_block_q8_1*, const unsigned char*, float*, int, int);
+#endif
 template <typename OutT, int NBLOCKS>
 __global__ void si_mmvq_q80_kfixed_kernel(const si_block_q8_1* __restrict__ vy, const unsigned char* __restrict__ W,
                                           OutT* __restrict__ y, int N) {
@@ -575,10 +627,18 @@ __global__ void si_mmvq_q80_kfixed_kernel(const si_block_q8_1* __restrict__ vy, 
     for (int m = 16; m > 0; m >>= 1) tmp += __shfl_xor_sync(0xffffffff, tmp, m);
     if (lane == 0) gemv_write(y + row, tmp);
 }
-SPARKINFER_KERNEL_INST(template __global__ void si_mmvq_q80_kfixed_kernel<__nv_bfloat16, 64>(const si_block_q8_1*, const unsigned char*, __nv_bfloat16*, int);)
-SPARKINFER_KERNEL_INST(template __global__ void si_mmvq_q80_kfixed_kernel<__nv_bfloat16, 128>(const si_block_q8_1*, const unsigned char*, __nv_bfloat16*, int);)
-SPARKINFER_KERNEL_INST(template __global__ void si_mmvq_q80_kfixed_kernel<float, 64>(const si_block_q8_1*, const unsigned char*, float*, int);)
-SPARKINFER_KERNEL_INST(template __global__ void si_mmvq_q80_kfixed_kernel<float, 128>(const si_block_q8_1*, const unsigned char*, float*, int);)
+#ifndef _MSC_VER
+template __global__ void si_mmvq_q80_kfixed_kernel<__nv_bfloat16, 64>(const si_block_q8_1*, const unsigned char*, __nv_bfloat16*, int);
+#endif
+#ifndef _MSC_VER
+template __global__ void si_mmvq_q80_kfixed_kernel<__nv_bfloat16, 128>(const si_block_q8_1*, const unsigned char*, __nv_bfloat16*, int);
+#endif
+#ifndef _MSC_VER
+template __global__ void si_mmvq_q80_kfixed_kernel<float, 64>(const si_block_q8_1*, const unsigned char*, float*, int);
+#endif
+#ifndef _MSC_VER
+template __global__ void si_mmvq_q80_kfixed_kernel<float, 128>(const si_block_q8_1*, const unsigned char*, float*, int);
+#endif
 template <typename OutT, int NSUPER>
 __global__ void si_mmvq_q4k_kfixed_kernel(const si_block_q8_1* __restrict__ vy, const unsigned char* __restrict__ W,
                                           OutT* __restrict__ y, int N) {
@@ -605,10 +665,18 @@ __global__ void si_mmvq_q4k_kfixed_kernel(const si_block_q8_1* __restrict__ vy, 
     if (lane == 0) gemv_write(y + row, tmp);
 }
 
-SPARKINFER_KERNEL_INST(template __global__ void si_mmvq_q4k_kfixed_kernel<__nv_bfloat16, 8>(const si_block_q8_1*, const unsigned char*, __nv_bfloat16*, int);)
-SPARKINFER_KERNEL_INST(template __global__ void si_mmvq_q4k_kfixed_kernel<__nv_bfloat16, 16>(const si_block_q8_1*, const unsigned char*, __nv_bfloat16*, int);)
-SPARKINFER_KERNEL_INST(template __global__ void si_mmvq_q4k_kfixed_kernel<float, 8>(const si_block_q8_1*, const unsigned char*, float*, int);)
-SPARKINFER_KERNEL_INST(template __global__ void si_mmvq_q4k_kfixed_kernel<float, 16>(const si_block_q8_1*, const unsigned char*, float*, int);)
+#ifndef _MSC_VER
+template __global__ void si_mmvq_q4k_kfixed_kernel<__nv_bfloat16, 8>(const si_block_q8_1*, const unsigned char*, __nv_bfloat16*, int);
+#endif
+#ifndef _MSC_VER
+template __global__ void si_mmvq_q4k_kfixed_kernel<__nv_bfloat16, 16>(const si_block_q8_1*, const unsigned char*, __nv_bfloat16*, int);
+#endif
+#ifndef _MSC_VER
+template __global__ void si_mmvq_q4k_kfixed_kernel<float, 8>(const si_block_q8_1*, const unsigned char*, float*, int);
+#endif
+#ifndef _MSC_VER
+template __global__ void si_mmvq_q4k_kfixed_kernel<float, 16>(const si_block_q8_1*, const unsigned char*, float*, int);
+#endif
 // One block per row index: warps 0-3 -> qkv[row], warps 4-7 -> z[row], keeping vy hot
 // in L2 across both when row < min(n_qkv, n_z). Grid = max(n_qkv, n_z).
 template <int NSUPER>
@@ -659,12 +727,16 @@ __global__ void si_mmvq_gdn_qkv_z_pack2_kernel(const si_block_q8_1* __restrict__
     }
 }
 
-SPARKINFER_KERNEL_INST(template __global__ void si_mmvq_gdn_qkv_z_pack2_kernel<8>(const si_block_q8_1*, const unsigned char*,
+#ifndef _MSC_VER
+template __global__ void si_mmvq_gdn_qkv_z_pack2_kernel<8>(const si_block_q8_1*, const unsigned char*,
                                                           const unsigned char*, __nv_bfloat16*,
-                                                          __nv_bfloat16*, int, int);)
-SPARKINFER_KERNEL_INST(template __global__ void si_mmvq_gdn_qkv_z_pack2_kernel<16>(const si_block_q8_1*, const unsigned char*,
+                                                          __nv_bfloat16*, int, int);
+#endif
+#ifndef _MSC_VER
+template __global__ void si_mmvq_gdn_qkv_z_pack2_kernel<16>(const si_block_q8_1*, const unsigned char*,
                                                           const unsigned char*, __nv_bfloat16*,
-                                                          __nv_bfloat16*, int, int);)
+                                                          __nv_bfloat16*, int, int);
+#endif
 // Shared-expert gate scalar: Q4_K mmvq (K=2048, N=1) + sigmoid in one launch.
 template <int NSUPER>
 __global__ void si_mmvq_q4k_sigmoid_kernel(const si_block_q8_1* __restrict__ vy,
@@ -733,9 +805,11 @@ __global__ void si_gdn_quad_mmvq_q4k_kernel(
     for (int m = 16; m > 0; m >>= 1) tmp += __shfl_xor_sync(0xffffffff, tmp, m);
     if (lane == 0) gemv_write(y + lrow, tmp);
 }
-SPARKINFER_KERNEL_INST(template __global__ void si_gdn_quad_mmvq_q4k_kernel<__nv_bfloat16, 8>(const si_block_q8_1*, const unsigned char*,
+#ifndef _MSC_VER
+template __global__ void si_gdn_quad_mmvq_q4k_kernel<__nv_bfloat16, 8>(const si_block_q8_1*, const unsigned char*,
     const unsigned char*, const unsigned char*, const unsigned char*, __nv_bfloat16*, __nv_bfloat16*,
-    __nv_bfloat16*, __nv_bfloat16*, int, int, int, int);)
+    __nv_bfloat16*, __nv_bfloat16*, int, int, int, int);
+#endif
 // Dual-row Q4_K mmvq: 8 warps/block (4 warps cooperate per row, 2 rows/block).
 // Layout differs from pack2 (warps 0-3 vs 4-7 per row-pair). Halves launch count for large N.
 template <typename OutT, int NSUPER>
@@ -769,10 +843,18 @@ __global__ void si_mmvq_q4k_dualrow_kernel(const si_block_q8_1* __restrict__ vy,
     for (int m = 16; m > 0; m >>= 1) tmp += __shfl_xor_sync(0xffffffff, tmp, m);
     if (lane == 0) gemv_write(y + row, tmp);
 }
-SPARKINFER_KERNEL_INST(template __global__ void si_mmvq_q4k_dualrow_kernel<__nv_bfloat16, 8>(const si_block_q8_1*, const unsigned char*, __nv_bfloat16*, int);)
-SPARKINFER_KERNEL_INST(template __global__ void si_mmvq_q4k_dualrow_kernel<float, 8>(const si_block_q8_1*, const unsigned char*, float*, int);)
-SPARKINFER_KERNEL_INST(template __global__ void si_mmvq_q4k_dualrow_kernel<__nv_bfloat16, 16>(const si_block_q8_1*, const unsigned char*, __nv_bfloat16*, int);)
-SPARKINFER_KERNEL_INST(template __global__ void si_mmvq_q4k_dualrow_kernel<float, 16>(const si_block_q8_1*, const unsigned char*, float*, int);)
+#ifndef _MSC_VER
+template __global__ void si_mmvq_q4k_dualrow_kernel<__nv_bfloat16, 8>(const si_block_q8_1*, const unsigned char*, __nv_bfloat16*, int);
+#endif
+#ifndef _MSC_VER
+template __global__ void si_mmvq_q4k_dualrow_kernel<float, 8>(const si_block_q8_1*, const unsigned char*, float*, int);
+#endif
+#ifndef _MSC_VER
+template __global__ void si_mmvq_q4k_dualrow_kernel<__nv_bfloat16, 16>(const si_block_q8_1*, const unsigned char*, __nv_bfloat16*, int);
+#endif
+#ifndef _MSC_VER
+template __global__ void si_mmvq_q4k_dualrow_kernel<float, 16>(const si_block_q8_1*, const unsigned char*, float*, int);
+#endif
 // Full-attn decode: Q+K+V Q4_K projections from one block_q8_1 activation in one grid.
 template <typename OutT, int NSUPER>
 __global__ void si_attn_qkv_mmvq_q4k_kernel(
@@ -812,10 +894,14 @@ __global__ void si_attn_qkv_mmvq_q4k_kernel(
     for (int m = 16; m > 0; m >>= 1) tmp += __shfl_xor_sync(0xffffffff, tmp, m);
     if (lane == 0) gemv_write(y + lrow, tmp);
 }
-SPARKINFER_KERNEL_INST(template __global__ void si_attn_qkv_mmvq_q4k_kernel<__nv_bfloat16, 8>(const si_block_q8_1*, const unsigned char*,
-    const unsigned char*, const unsigned char*, __nv_bfloat16*, __nv_bfloat16*, __nv_bfloat16*, int, int, int);)
-SPARKINFER_KERNEL_INST(template __global__ void si_attn_qkv_mmvq_q4k_kernel<__nv_bfloat16, 16>(const si_block_q8_1*, const unsigned char*,
-    const unsigned char*, const unsigned char*, __nv_bfloat16*, __nv_bfloat16*, __nv_bfloat16*, int, int, int);)
+#ifndef _MSC_VER
+template __global__ void si_attn_qkv_mmvq_q4k_kernel<__nv_bfloat16, 8>(const si_block_q8_1*, const unsigned char*,
+    const unsigned char*, const unsigned char*, __nv_bfloat16*, __nv_bfloat16*, __nv_bfloat16*, int, int, int);
+#endif
+#ifndef _MSC_VER
+template __global__ void si_attn_qkv_mmvq_q4k_kernel<__nv_bfloat16, 16>(const si_block_q8_1*, const unsigned char*,
+    const unsigned char*, const unsigned char*, __nv_bfloat16*, __nv_bfloat16*, __nv_bfloat16*, int, int, int);
+#endif
 // ===== faithful llama Q6_K mmvq for the fp32-path GEMVs (attn-V upgrades + LM head) =====
 // Same 4-warp-per-row structure as the Q4_K mmvq, with vec_dot_q6_K_q8_1 (coalesced
 // ql/qh int loads + __vsubss4 reconstruct + dp4a). Mirrors the #65 MoE-down dot.
@@ -872,8 +958,12 @@ __global__ void si_mmvq_q6k_kernel(const si_block_q8_1* __restrict__ vy, const u
     for (int m = 16; m > 0; m >>= 1) tmp += __shfl_xor_sync(0xffffffff, tmp, m);
     if (lane == 0) gemv_write(y + row, tmp);
 }
-SPARKINFER_KERNEL_INST(template __global__ void si_mmvq_q6k_kernel<__nv_bfloat16>(const si_block_q8_1*, const unsigned char*, __nv_bfloat16*, int, int);)
-SPARKINFER_KERNEL_INST(template __global__ void si_mmvq_q6k_kernel<float>(const si_block_q8_1*, const unsigned char*, float*, int, int);)
+#ifndef _MSC_VER
+template __global__ void si_mmvq_q6k_kernel<__nv_bfloat16>(const si_block_q8_1*, const unsigned char*, __nv_bfloat16*, int, int);
+#endif
+#ifndef _MSC_VER
+template __global__ void si_mmvq_q6k_kernel<float>(const si_block_q8_1*, const unsigned char*, float*, int, int);
+#endif
 template <typename OutT, int NSUPER>
 __global__ void si_mmvq_q6k_kfixed_kernel(const si_block_q8_1* __restrict__ vy, const unsigned char* __restrict__ W,
                                           OutT* __restrict__ y, int N) {
@@ -900,10 +990,18 @@ __global__ void si_mmvq_q6k_kfixed_kernel(const si_block_q8_1* __restrict__ vy, 
     if (lane == 0) gemv_write(y + row, tmp);
 }
 
-SPARKINFER_KERNEL_INST(template __global__ void si_mmvq_q6k_kfixed_kernel<__nv_bfloat16, 8>(const si_block_q8_1*, const unsigned char*, __nv_bfloat16*, int);)
-SPARKINFER_KERNEL_INST(template __global__ void si_mmvq_q6k_kfixed_kernel<__nv_bfloat16, 16>(const si_block_q8_1*, const unsigned char*, __nv_bfloat16*, int);)
-SPARKINFER_KERNEL_INST(template __global__ void si_mmvq_q6k_kfixed_kernel<float, 8>(const si_block_q8_1*, const unsigned char*, float*, int);)
-SPARKINFER_KERNEL_INST(template __global__ void si_mmvq_q6k_kfixed_kernel<float, 16>(const si_block_q8_1*, const unsigned char*, float*, int);)
+#ifndef _MSC_VER
+template __global__ void si_mmvq_q6k_kfixed_kernel<__nv_bfloat16, 8>(const si_block_q8_1*, const unsigned char*, __nv_bfloat16*, int);
+#endif
+#ifndef _MSC_VER
+template __global__ void si_mmvq_q6k_kfixed_kernel<__nv_bfloat16, 16>(const si_block_q8_1*, const unsigned char*, __nv_bfloat16*, int);
+#endif
+#ifndef _MSC_VER
+template __global__ void si_mmvq_q6k_kfixed_kernel<float, 8>(const si_block_q8_1*, const unsigned char*, float*, int);
+#endif
+#ifndef _MSC_VER
+template __global__ void si_mmvq_q6k_kfixed_kernel<float, 16>(const si_block_q8_1*, const unsigned char*, float*, int);
+#endif
 // 1-warp-per-row Q6_K dp4a GEMV: keeps the fp32 gemv_q block structure (GEMV_WPB rows/block,
 // well-occupied for large N like the LM head's 151936 rows) but dp4a instead of fp32 dequant.
 // The 4-warp si_mmvq is right for small-N rows (attn-V); this is right for the huge LM head.
@@ -922,9 +1020,15 @@ __global__ void gemv_q6k_dp4a_kernel(const si_block_q8_1* __restrict__ vy, const
     for (int m = 16; m > 0; m >>= 1) acc += __shfl_xor_sync(0xffffffff, acc, m);
     if (lane == 0) gemv_write(y + row, acc);
 }
-SPARKINFER_KERNEL_INST(template __global__ void gemv_q6k_dp4a_kernel<float, 8>(const si_block_q8_1*, const unsigned char*, float*, int, int);)
-SPARKINFER_KERNEL_INST(template __global__ void gemv_q6k_dp4a_kernel<float, 16>(const si_block_q8_1*, const unsigned char*, float*, int, int);)
-SPARKINFER_KERNEL_INST(template __global__ void gemv_q6k_dp4a_kernel<float, 32>(const si_block_q8_1*, const unsigned char*, float*, int, int);)
+#ifndef _MSC_VER
+template __global__ void gemv_q6k_dp4a_kernel<float, 8>(const si_block_q8_1*, const unsigned char*, float*, int, int);
+#endif
+#ifndef _MSC_VER
+template __global__ void gemv_q6k_dp4a_kernel<float, 16>(const si_block_q8_1*, const unsigned char*, float*, int, int);
+#endif
+#ifndef _MSC_VER
+template __global__ void gemv_q6k_dp4a_kernel<float, 32>(const si_block_q8_1*, const unsigned char*, float*, int, int);
+#endif
 template <typename OutT, int WPB, int NSUPER>
 __global__ void gemv_q6k_dp4a_kfixed_kernel(const si_block_q8_1* __restrict__ vy, const unsigned char* __restrict__ W,
                                             OutT* __restrict__ y, int N) {
@@ -940,8 +1044,12 @@ __global__ void gemv_q6k_dp4a_kfixed_kernel(const si_block_q8_1* __restrict__ vy
     for (int m = 16; m > 0; m >>= 1) acc += __shfl_xor_sync(0xffffffff, acc, m);
     if (lane == 0) gemv_write(y + row, acc);
 }
-SPARKINFER_KERNEL_INST(template __global__ void gemv_q6k_dp4a_kfixed_kernel<float, 8, 8>(const si_block_q8_1*, const unsigned char*, float*, int);)
-SPARKINFER_KERNEL_INST(template __global__ void gemv_q6k_dp4a_kfixed_kernel<float, 16, 8>(const si_block_q8_1*, const unsigned char*, float*, int);)
+#ifndef _MSC_VER
+template __global__ void gemv_q6k_dp4a_kfixed_kernel<float, 8, 8>(const si_block_q8_1*, const unsigned char*, float*, int);
+#endif
+#ifndef _MSC_VER
+template __global__ void gemv_q6k_dp4a_kfixed_kernel<float, 16, 8>(const si_block_q8_1*, const unsigned char*, float*, int);
+#endif
 #ifndef SPARKINFER_NVRTC_DEVICE_ONLY
 #include "sparkinfer/kernels/gemm.h"
 #include <cstdlib>

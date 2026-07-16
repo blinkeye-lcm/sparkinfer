@@ -19,12 +19,6 @@ option(BUILD_CUTE_KERNELS  "Experimental CuTe DSL kernels (needs CUTLASS)" OFF)
 
 include_directories(include)
 
-if(MSVC)
-  # Force-include cuda_compat.h so SPARKINFER_KERNEL_INST wraps explicit inst lines.
-  add_compile_options(
-    $<$<COMPILE_LANGUAGE:CUDA>:-Xcompiler=/FI${CMAKE_CURRENT_SOURCE_DIR}/include/sparkinfer/kernels/cuda_compat.h>)
-endif()
-
 # --- Portable CUDA kernel domains (production path, runs on sm_120) ---
 add_subdirectory(csrc/cuda/attention)   # flash decode variants (GQA, hd256, hd512)
 add_subdirectory(csrc/cuda/gemm)        # GEMM, GEMV, batched GEMM
@@ -33,6 +27,13 @@ add_subdirectory(csrc/cuda/quant)       # quantization helpers
 add_subdirectory(csrc/cuda/fused)       # fused GEMM + epilogue (non-CuTe path)
 
 set(SPARKINFER_KERNEL_LIBS si_attn si_gemm si_moe si_quant si_fused)
+
+if(MSVC)
+  # MSVC device link of RDC static libs into a DLL is brittle; whole-TU compile is fine.
+  foreach(lib IN LISTS SPARKINFER_KERNEL_LIBS)
+    set_target_properties(${lib} PROPERTIES CUDA_SEPARABLE_COMPILATION OFF)
+  endforeach()
+endif()
 
 # --- Optional CuTe DSL kernel domains (experimental, sm_100a/sm_120a) ---
 if(BUILD_CUTE_KERNELS)
