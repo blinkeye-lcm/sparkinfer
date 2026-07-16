@@ -81,7 +81,7 @@ jobs:
           if-no-files-found: error
 
   build-windows:
-    runs-on: windows-latest
+    runs-on: windows-2022
     permissions:
       contents: read
       id-token: write
@@ -98,6 +98,11 @@ jobs:
         with:
           cuda: "12.8.1"
           use-github-cache: false
+
+      - name: Setup MSVC
+        uses: ilammy/msvc-dev-cmd@v1.13.0
+        with:
+          arch: x64
 
       - name: Configure
         shell: pwsh
