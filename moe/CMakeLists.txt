@@ -18,7 +18,11 @@ endif()
 include_directories(include)
 
 file(GLOB_RECURSE MOE_SRC "src/*.cpp")
-add_library(sparkinfer_moe SHARED ${MOE_SRC})
+if(WIN32)
+  add_library(sparkinfer_moe STATIC ${MOE_SRC})
+else()
+  add_library(sparkinfer_moe SHARED ${MOE_SRC})
+endif()
 target_include_directories(sparkinfer_moe PUBLIC include)
 target_link_libraries(sparkinfer_moe PUBLIC sparkinfer_kernels CUDA::cudart)
 
