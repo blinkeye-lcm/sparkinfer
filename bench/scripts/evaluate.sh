@@ -619,7 +619,7 @@ if not use_frontier and frontier > 0 and tps >= 1000:
     use_frontier = True  # batched sparkinfer pp — tier on same-box main, not llama anchor
 print(0 if use_frontier else llama)
 PY
-)\" SPARKINFER_DIFFICULTY_BOOST="${SPARKINFER_DIFFICULTY_BOOST:-1}" \
+)" SPARKINFER_DIFFICULTY_BOOST="${SPARKINFER_DIFFICULTY_BOOST:-1}" \
   python3 "$HERE/label.py" "$PREFILL_SELECTED_TPS" "$PREFILL_SELECTED_FRONTIER" "$CEILING" "$TOP1" "$KL" "$COMMIT" "{}")"
 DECODE_LINE="$DECODE_LINE" PREFILL_LINE="$PREFILL_LINE" python3 - <<'PY'
 import json, os
