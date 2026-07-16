@@ -41,12 +41,14 @@ bench_sweep_run() {
   export SPARKINFER_BENCH_SWEEP_CTXS="$csv"
   export SPARKINFER_BENCH_SWEEP_REPS="$max_reps"
   out="$(si_run qwen3_gguf_bench "$gguf" "$n_tokens" sweep 2>&1)" || rc=$?
+  _BENCH_SWEEP_ERR="${out##*$'\n'}"
   _BENCH_SWEEP_JSON="$(printf '%s\n' "$out" | sed -n 's/^SWEEP_JSON //p' | tail -1)"
   if [ "$rc" != 0 ] || [ -z "$_BENCH_SWEEP_JSON" ]; then
-    echo ">> WARN: bench sweep failed (rc=$rc): ${out##*$'\n'}" >&2
+    echo ">> WARN: bench sweep failed (rc=$rc): ${_BENCH_SWEEP_ERR}" >&2
     _BENCH_SWEEP_JSON=""
     return 1
   fi
+  _BENCH_SWEEP_ERR=""
   gclks+=("$(nvidia-smi --query-gpu=clocks.gr --format=csv,noheader,nounits 2>/dev/null | head -1 | tr -d ' ')")
   echo ">> bench sweep ok (${csv})" >&2
   return 0
