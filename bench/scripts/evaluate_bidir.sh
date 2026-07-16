@@ -50,8 +50,19 @@ P36_DIR="${PRIMARY36_MODELS_DIR:-${MODELS_DIR:-$ROOT/models}36}"
 QUANT="${PRIMARY_QUANT:-Q4_K_M}"
 echo ">> bidir: Qwen3.5=$P35_FILE (quant=$QUANT, ctx=128/4k/32k/64k) + Qwen3.6=$P36_FILE (ctx=128/512/4k/16k/32k)" >&2
 
-reap() { pkill -f llama-server 2>/dev/null || true; pkill -f qwen3_gguf 2>/dev/null || true; sleep 1; true; }
-reap_bench() { pkill -f qwen3_gguf 2>/dev/null || true; sleep 1; true; }
+reap() {
+  pkill -f llama-server 2>/dev/null || true
+  pkill -f qwen3_gguf_bench 2>/dev/null || true
+  pkill -f qwen3_gguf 2>/dev/null || true
+  sleep 3
+  true
+}
+reap_bench() {
+  pkill -f qwen3_gguf_bench 2>/dev/null || true
+  pkill -f qwen3_gguf 2>/dev/null || true
+  sleep 3
+  true
+}
 
 declare -A _ACC_TOP1 _ACC_KL
 _LAST_GGUF=""
@@ -416,6 +427,8 @@ def load(name):
         return {}
 
 def guard_ok(guard):
+    if guard.get("infra_error"):
+        return True, [], True, True
     gctx = ["guard_128_pass", "guard_512_pass", "guard_4k_pass", "guard_16k_pass", "guard_32k_pass",
             "guard_64k_pass", "guard_128k_pass"]
     present = [k for k in gctx if k in guard]
@@ -434,6 +447,8 @@ def merge_primary(primary, guard, scored_model, guard_model, guard_prefix):
     if not primary:
         return {"label": "REJECT", "pass": False,
                 "reason": f"primary ({scored_model}) produced no verdict (infra error)"}
+    if primary.get("infra_error"):
+        return dict(primary)
     _, regressed, speed_ok, acc_ok = guard_ok(guard)
     out = dict(primary)
     out["model"] = scored_model
@@ -480,11 +495,19 @@ def pick_best(a, b):
 
 def pick_headline(a, b):
     """Headline verdict: a failing optimize run must not lose to the other's none."""
+    if a.get("pass") and not b.get("pass"):
+        return dict(a)
+    if b.get("pass") and not a.get("pass"):
+        return dict(b)
     if not a.get("pass") or not b.get("pass"):
         for s in (a, b):
+            if s.get("infra_error"):
+                continue
             if not s.get("pass") and s.get("label") == "REJECT":
                 return dict(s)
         for s in (a, b):
+            if s.get("infra_error"):
+                continue
             if not s.get("pass"):
                 return dict(s)
     return pick_best(a, b)

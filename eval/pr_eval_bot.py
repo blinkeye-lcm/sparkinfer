@@ -1157,8 +1157,10 @@ def render(res, oid):
             "BASELINE": "No same-box main baseline was set; this run establishes one."
             }.get(label, f"Verified speedup over same-box origin/main — "
                          f"{res.get('tps')} tok/s (main was {res.get('frontier_tps','?')} tok/s).")
-    if label == "REJECT" and res.get("auto_close"):
+    if label == "REJECT" and res.get("auto_close") and not res.get("infra_error"):
         note = "No context cleared the 2% significance gate while at least one context regressed. Auto-closing this PR."
+    if res.get("infra_error") or str(res.get("reason") or "").startswith("infra error"):
+        note = "Infra failure during eval (not a verified PR regression) — re-run recommended."
     target_note = ("128/512/4k/16k/32k guarded · Qwen3.5 prefill at 4k/32k/64k · scored vs same-box main"
                    if res.get("eval_mode") == "longctx" and (res.get("score_qwen35") or {}).get("eval_prefill")
                    else "128/512/4k/16k/32k guarded · scored vs same-box main · strongest context scores"

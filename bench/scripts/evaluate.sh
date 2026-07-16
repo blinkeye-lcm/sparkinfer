@@ -37,6 +37,21 @@ if [ -n "$REF" ] && [ -z "${SI_NO_CHECKOUT:-}" ]; then
 fi
 COMMIT="$(git -C "$ROOT" rev-parse --short HEAD)"
 
+emit_infra_verdict() {
+  COMMIT="$COMMIT" FRONTIER="$FRONTIER" INFRA_MSG="$1" python3 - <<'PY'
+import json, os
+print("RESULT_JSON " + json.dumps({
+    "commit": os.environ["COMMIT"],
+    "tps": 0, "top1": 0, "kl": 99,
+    "frontier_tps": float(os.environ.get("FRONTIER", "0") or 0),
+    "label": "REJECT", "pass": False,
+    "reason": "infra error: " + os.environ["INFRA_MSG"],
+    "infra_error": True,
+}))
+PY
+  exit 0
+}
+
 # SI_SKIP_BUILD=1: the caller (evaluate_dual.sh) already built this exact tree from source and is
 # now scoring a second model against the same binaries — skip the rebuild so a two-model eval pays
 # the (model-agnostic) compile cost once, not twice.
@@ -165,6 +180,9 @@ else
       GUARD_4K_PP_TPS=0; GUARD_32K_PP_TPS=0; GUARD_64K_PP_TPS=0; GUARD_128K_PP_TPS=0
     fi
   else
+    if [[ "${_BENCH_SWEEP_ERR:-}" == *"[FAIL] load"* ]]; then
+      emit_infra_verdict "model load failed during bench sweep: ${_BENCH_SWEEP_ERR}"
+    fi
     si_run qwen3_gguf_bench "$GGUF" 64 "$GUARD_CTX" >/dev/null 2>&1 || true
     GUARD_TPS="$(median_ctx "$GUARD_CTX" "$GUARD_REPS")"
     GUARD_512_TPS="$(median_ctx "$GUARD_512_CTX" "$GUARD_512_REPS")"
@@ -449,11 +467,21 @@ if [ "${SPARKINFER_SKIP_ACCURACY:-0}" = "1" ] && [ -n "${SPARKINFER_ACCURACY_TOP
   TOP1="${SPARKINFER_ACCURACY_TOP1}"
   KL="${SPARKINFER_ACCURACY_KL:-99}"
 else
-  acc=$(SPARKINFER_EVAL_SEED="$EVAL_SEED" "$HERE/accuracy.sh" "$GGUF" 2>/dev/null || true)
+  _acc_err="$(mktemp)"
+  acc=$(SPARKINFER_EVAL_SEED="$EVAL_SEED" "$HERE/accuracy.sh" "$GGUF" 2>"$_acc_err" || true)
+  if ! printf '%s\n' "$acc" | grep -q 'METRIC '; then
+    _errtail="$(tail -1 "$_acc_err" 2>/dev/null | tr -d '\n' | head -c 200)"
+    rm -f "$_acc_err"
+    emit_infra_verdict "accuracy check produced no METRIC (${_errtail:-empty})"
+  fi
+  rm -f "$_acc_err"
   # parse the unambiguous METRIC line (not the human-readable text, which contains "bar >= 0.90")
   TOP1=$(printf '%s\n' "$acc" | sed -n 's/.*METRIC .*top1=\([0-9.][0-9.]*\).*/\1/p' | head -1)
   KL=$(printf   '%s\n' "$acc" | sed -n 's/.*METRIC .*kl=\([0-9.][0-9.]*\).*/\1/p' | head -1)
   TOP1="${TOP1:-0}"; KL="${KL:-99}"
+  if [ "$TOP1" = "0" ] && [ "$KL" = "99" ]; then
+    emit_infra_verdict "accuracy METRIC parsed as top1=0 kl=99 (likely failed run)"
+  fi
 fi
 
 # Provenance merged into the verdict (M1 clock, H1 seed, C2 reference pins) — non-scoring, for the log.
