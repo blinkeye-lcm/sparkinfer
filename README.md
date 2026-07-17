@@ -8,12 +8,6 @@
 
 **Why fastest?** Faster inference means more intelligence, more responsive agents, and more efficient compute.
 
-| | |
-|---|---|
-| **[Live dashboard](https://gittensor-ai-lab.github.io/sparkinfer/dashboard/)** | Frontier tok/s, optimization journey, evaluated PRs |
-| **[SparkInfer Chat](https://github.com/gittensor-ai-lab/sparkinfer-web)** | Next.js UI — streaming, think mode, OpenAI-compatible proxy |
-| **[OpenAI API server](server/)** | `sparkinfer-server` on `dev` — `/v1/chat/completions`, `/v1/info`, `/v1/tokenize` |
-
 > **Fewer models. Deeper optimization. Faster evolution.**
 
 ## Frontier models
