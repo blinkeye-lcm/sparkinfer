@@ -139,3 +139,23 @@ chosen = max(scorable, key=lambda c: c["gain"]) if scorable else fallback
 print(json.dumps({"chosen": chosen, "contexts": contexts, "metric": "prefill"}, separators=(",", ":")))
 PY
 }
+
+# Qwen3.6 prefill pp at 128/512/4k/16k/32k (same contexts as decode scoring).
+build_q36_pp_score_select() {
+  python3 - <<PY
+import json
+contexts = [
+  {"ctx":128, "label":"128-context", "tps":float("$GUARD_128_PP_TPS"), "base":float("$GUARD_128_PP_BASELINE"), "llama":float("$LLAMA_128_PP")},
+  {"ctx":512, "label":"512-context", "tps":float("$GUARD_512_PP_TPS"), "base":float("$GUARD_512_PP_BASELINE"), "llama":float("$LLAMA_512_PP")},
+  {"ctx":4096, "label":"4k-context", "tps":float("$GUARD_4K_PP_TPS"), "base":float("$GUARD_4K_PP_BASELINE"), "llama":float("$LLAMA_4K_PP")},
+  {"ctx":16384, "label":"16k-context", "tps":float("$GUARD_16K_PP_TPS"), "base":float("$GUARD_16K_PP_BASELINE"), "llama":float("$LLAMA_16K_PP")},
+  {"ctx":32768, "label":"32k-context", "tps":float("$GUARD_32K_PP_TPS"), "base":float("$GUARD_32K_PP_BASELINE"), "llama":float("$LLAMA_32K_PP")},
+]
+for c in contexts:
+    c["gain"] = 0.0 if c["base"] <= 0 else (c["tps"] - c["base"]) / c["base"]
+scorable = [c for c in contexts if c["base"] > 0 and c["tps"] > 0]
+fallback = {"ctx":4096, "label":"4k-context", "tps":0, "base":0, "llama":0, "gain":0}
+chosen = max(scorable, key=lambda c: c["gain"]) if scorable else fallback
+print(json.dumps({"chosen": chosen, "contexts": contexts, "metric": "prefill"}, separators=(",", ":")))
+PY
+}

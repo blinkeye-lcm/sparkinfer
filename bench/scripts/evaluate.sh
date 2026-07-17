@@ -116,15 +116,27 @@ GUARD_4K_PP_BASELINE="${SPARKINFER_GUARD_4K_PP_BASELINE:-0}"
 GUARD_32K_PP_BASELINE="${SPARKINFER_GUARD_32K_PP_BASELINE:-0}"
 GUARD_64K_PP_BASELINE="${SPARKINFER_GUARD_64K_PP_BASELINE:-0}"
 GUARD_128K_PP_BASELINE="${SPARKINFER_GUARD_128K_PP_BASELINE:-0}"
+GUARD_128_PP_BASELINE="${SPARKINFER_GUARD_128_PP_BASELINE:-0}"
+GUARD_512_PP_BASELINE="${SPARKINFER_GUARD_512_PP_BASELINE:-0}"
+GUARD_16K_PP_BASELINE="${SPARKINFER_GUARD_16K_PP_BASELINE:-0}"
 LLAMA_4K_PP_BASELINE="${SPARKINFER_LLAMA_4K_PP_BASELINE:-0}"
 LLAMA_32K_PP_BASELINE="${SPARKINFER_LLAMA_32K_PP_BASELINE:-0}"
 LLAMA_64K_PP_BASELINE="${SPARKINFER_LLAMA_64K_PP_BASELINE:-0}"
 LLAMA_128K_PP_BASELINE="${SPARKINFER_LLAMA_128K_PP_BASELINE:-0}"
-# Prefill scoring is Qwen3.5-only (Qwythos bidir primary). Qwen3.6 / guard runs leave this at 0.
+LLAMA_128_PP_BASELINE="${SPARKINFER_LLAMA_128_PP_BASELINE:-0}"
+LLAMA_512_PP_BASELINE="${SPARKINFER_LLAMA_512_PP_BASELINE:-0}"
+LLAMA_16K_PP_BASELINE="${SPARKINFER_LLAMA_16K_PP_BASELINE:-0}"
+# Prefill scoring: qwen35 = 4k/32k/64k/128k (Qwythos bidir primary); qwen36 = 128/512/4k/16k/32k.
 EVAL_PREFILL="${SPARKINFER_EVAL_PREFILL:-0}"
+PREFILL_PROFILE="${SPARKINFER_PREFILL_PROFILE:-qwen35}"
+[ "$EVAL_PREFILL" != "1" ] && PREFILL_PROFILE=""
 
 if [ "$EVAL_PREFILL" = "1" ]; then
-  echo ">> [2/3] speed — ${EVAL_MODE} decode + Qwen3.5 prefill pp benchmark ..." >&2
+  if [ "$PREFILL_PROFILE" = "qwen36" ]; then
+    echo ">> [2/3] speed — ${EVAL_MODE} decode + Qwen3.6 prefill pp benchmark ..." >&2
+  else
+    echo ">> [2/3] speed — ${EVAL_MODE} decode + Qwen3.5 prefill pp benchmark ..." >&2
+  fi
 else
   echo ">> [2/3] speed — ${EVAL_MODE} decode benchmark ..." >&2
 fi
@@ -152,7 +164,11 @@ if [ "$EVAL_MODE" = "short" ]; then
   PREFILL_CONTEXT_GAINS_JSON='{}'
 else
   if [ "$EVAL_PREFILL" = "1" ]; then
-    echo ">> context policy: ${DECODE_TOKENS}-token decode + prefill pp at 4k/32k/64k/128k; best context scores each metric" >&2
+    if [ "$PREFILL_PROFILE" = "qwen36" ]; then
+      echo ">> context policy: ${DECODE_TOKENS}-token decode + prefill pp at 128/512/4k/16k/32k; best context scores each metric" >&2
+    else
+      echo ">> context policy: ${DECODE_TOKENS}-token decode + prefill pp at 4k/32k/64k/128k; best context scores each metric" >&2
+    fi
   else
     echo ">> context policy: ${DECODE_TOKENS}-token decode at 128/512/4k/16k/32k/64k/128k (as configured); all measured contexts guarded; best context scores" >&2
   fi
@@ -172,11 +188,22 @@ else
     GUARD_64K_TPS="$(_bench_sweep_get "$GUARD_64K_CTX" decode_tps)"
     GUARD_128K_TPS="$(_bench_sweep_get "$GUARD_128K_CTX" decode_tps)"
     if [ "$EVAL_PREFILL" = "1" ]; then
-      GUARD_4K_PP_TPS="$(_bench_sweep_get "$GUARD_4K_CTX" prefill_pp)"
-      GUARD_32K_PP_TPS="$(_bench_sweep_get "$GUARD_32K_CTX" prefill_pp)"
-      GUARD_64K_PP_TPS="$(_bench_sweep_get "$GUARD_64K_CTX" prefill_pp)"
-      GUARD_128K_PP_TPS="$(_bench_sweep_get "$GUARD_128K_CTX" prefill_pp)"
+      if [ "$PREFILL_PROFILE" = "qwen36" ]; then
+        GUARD_128_PP_TPS="$(_bench_sweep_get 0 prefill_pp)"
+        GUARD_512_PP_TPS="$(_bench_sweep_get 512 prefill_pp)"
+        GUARD_4K_PP_TPS="$(_bench_sweep_get 4096 prefill_pp)"
+        GUARD_16K_PP_TPS="$(_bench_sweep_get 16384 prefill_pp)"
+        GUARD_32K_PP_TPS="$(_bench_sweep_get 32768 prefill_pp)"
+        GUARD_64K_PP_TPS=0; GUARD_128K_PP_TPS=0
+      else
+        GUARD_128_PP_TPS=0; GUARD_512_PP_TPS=0; GUARD_16K_PP_TPS=0
+        GUARD_4K_PP_TPS="$(_bench_sweep_get "$GUARD_4K_CTX" prefill_pp)"
+        GUARD_32K_PP_TPS="$(_bench_sweep_get "$GUARD_32K_CTX" prefill_pp)"
+        GUARD_64K_PP_TPS="$(_bench_sweep_get "$GUARD_64K_CTX" prefill_pp)"
+        GUARD_128K_PP_TPS="$(_bench_sweep_get "$GUARD_128K_CTX" prefill_pp)"
+      fi
     else
+      GUARD_128_PP_TPS=0; GUARD_512_PP_TPS=0; GUARD_16K_PP_TPS=0
       GUARD_4K_PP_TPS=0; GUARD_32K_PP_TPS=0; GUARD_64K_PP_TPS=0; GUARD_128K_PP_TPS=0
     fi
   else
@@ -192,11 +219,22 @@ else
     GUARD_64K_TPS="$(median_ctx "$GUARD_64K_CTX" "$GUARD_64K_REPS")"
     GUARD_128K_TPS="$(median_ctx "$GUARD_128K_CTX" "$GUARD_128K_REPS")"
     if [ "$EVAL_PREFILL" = "1" ]; then
-      GUARD_4K_PP_TPS="$(median_ctx_pp "$GUARD_4K_CTX" "$GUARD_4K_REPS")"
-      GUARD_32K_PP_TPS="$(median_ctx_pp "$GUARD_32K_CTX" "$GUARD_32K_REPS")"
-      GUARD_64K_PP_TPS="$(median_ctx_pp "$GUARD_64K_CTX" "$GUARD_64K_REPS")"
-      GUARD_128K_PP_TPS="$(median_ctx_pp "$GUARD_128K_CTX" "$GUARD_128K_REPS")"
+      if [ "$PREFILL_PROFILE" = "qwen36" ]; then
+        GUARD_128_PP_TPS="$(median_ctx_pp 0 "$GUARD_REPS")"
+        GUARD_512_PP_TPS="$(median_ctx_pp "$GUARD_512_CTX" "$GUARD_512_REPS")"
+        GUARD_4K_PP_TPS="$(median_ctx_pp "$GUARD_4K_CTX" "$GUARD_4K_REPS")"
+        GUARD_16K_PP_TPS="$(median_ctx_pp "$SCORE_CTX" "$SCORE_REPS")"
+        GUARD_32K_PP_TPS="$(median_ctx_pp "$GUARD_32K_CTX" "$GUARD_32K_REPS")"
+        GUARD_64K_PP_TPS=0; GUARD_128K_PP_TPS=0
+      else
+        GUARD_128_PP_TPS=0; GUARD_512_PP_TPS=0; GUARD_16K_PP_TPS=0
+        GUARD_4K_PP_TPS="$(median_ctx_pp "$GUARD_4K_CTX" "$GUARD_4K_REPS")"
+        GUARD_32K_PP_TPS="$(median_ctx_pp "$GUARD_32K_CTX" "$GUARD_32K_REPS")"
+        GUARD_64K_PP_TPS="$(median_ctx_pp "$GUARD_64K_CTX" "$GUARD_64K_REPS")"
+        GUARD_128K_PP_TPS="$(median_ctx_pp "$GUARD_128K_CTX" "$GUARD_128K_REPS")"
+      fi
     else
+      GUARD_128_PP_TPS=0; GUARD_512_PP_TPS=0; GUARD_16K_PP_TPS=0
       GUARD_4K_PP_TPS=0; GUARD_32K_PP_TPS=0; GUARD_64K_PP_TPS=0; GUARD_128K_PP_TPS=0
     fi
   fi
@@ -296,6 +334,21 @@ base=float("$GUARD_4K_PP_BASELINE"); cur=float("$GUARD_4K_PP_TPS"); tol=float("$
 print("true" if "$EVAL_PREFILL" != "1" or base <= 0 or cur >= base * tol else "false")
 PY
 )"
+  GUARD_128_PP_PASS="$(python3 - <<PY
+base=float("$GUARD_128_PP_BASELINE"); cur=float("$GUARD_128_PP_TPS"); tol=float("$GUARD_TOL")
+print("true" if "$EVAL_PREFILL" != "1" or "$PREFILL_PROFILE" != "qwen36" or base <= 0 or cur >= base * tol else "false")
+PY
+)"
+  GUARD_512_PP_PASS="$(python3 - <<PY
+base=float("$GUARD_512_PP_BASELINE"); cur=float("$GUARD_512_PP_TPS"); tol=float("$GUARD_512_TOL")
+print("true" if "$EVAL_PREFILL" != "1" or "$PREFILL_PROFILE" != "qwen36" or base <= 0 or cur >= base * tol else "false")
+PY
+)"
+  GUARD_16K_PP_PASS="$(python3 - <<PY
+base=float("$GUARD_16K_PP_BASELINE"); cur=float("$GUARD_16K_PP_TPS"); tol=float("$GUARD_16K_TOL")
+print("true" if "$EVAL_PREFILL" != "1" or "$PREFILL_PROFILE" != "qwen36" or base <= 0 or cur >= base * tol else "false")
+PY
+)"
   GUARD_32K_PP_PASS="$(python3 - <<PY
 base=float("$GUARD_32K_PP_BASELINE"); cur=float("$GUARD_32K_PP_TPS"); tol=float("$GUARD_32K_TOL")
 print("true" if "$EVAL_PREFILL" != "1" or base <= 0 or cur >= base * tol else "false")
@@ -338,9 +391,16 @@ print(json.dumps({"chosen": chosen, "contexts": contexts}, separators=(",", ":")
 PY
 )"
   if [ "$EVAL_PREFILL" = "1" ]; then
-    export LLAMA_4K_PP="$LLAMA_4K_PP_BASELINE" LLAMA_32K_PP="$LLAMA_32K_PP_BASELINE"
-    export LLAMA_64K_PP="$LLAMA_64K_PP_BASELINE" LLAMA_128K_PP="$LLAMA_128K_PP_BASELINE"
-    PREFILL_SCORE_SELECT="$(build_pp_score_select)"
+    if [ "$PREFILL_PROFILE" = "qwen36" ]; then
+      export LLAMA_128_PP="$LLAMA_128_PP_BASELINE" LLAMA_512_PP="$LLAMA_512_PP_BASELINE"
+      export LLAMA_4K_PP="$LLAMA_4K_PP_BASELINE" LLAMA_16K_PP="$LLAMA_16K_PP_BASELINE"
+      export LLAMA_32K_PP="$LLAMA_32K_PP_BASELINE"
+      PREFILL_SCORE_SELECT="$(build_q36_pp_score_select)"
+    else
+      export LLAMA_4K_PP="$LLAMA_4K_PP_BASELINE" LLAMA_32K_PP="$LLAMA_32K_PP_BASELINE"
+      export LLAMA_64K_PP="$LLAMA_64K_PP_BASELINE" LLAMA_128K_PP="$LLAMA_128K_PP_BASELINE"
+      PREFILL_SCORE_SELECT="$(build_pp_score_select)"
+    fi
   else
     PREFILL_SCORE_SELECT='{"chosen":{"ctx":4096,"label":"4k-context","tps":0,"base":0,"llama":0,"gain":0},"contexts":[]}'
   fi
@@ -426,10 +486,18 @@ if "$GUARD_32K_PASS" != "true": labels.append("regression-32k")
 if "$GUARD_64K_PASS" != "true": labels.append("regression-64k")
 if "$GUARD_128K_PASS" != "true": labels.append("regression-128k")
 if "$EVAL_PREFILL" == "1":
-  if "$GUARD_4K_PP_PASS" != "true": labels.append("regression-4k-pp")
-  if "$GUARD_32K_PP_PASS" != "true": labels.append("regression-32k-pp")
-  if "$GUARD_64K_PP_PASS" != "true": labels.append("regression-64k-pp")
-  if "$GUARD_128K_PP_PASS" != "true": labels.append("regression-128k-pp")
+  profile = "$PREFILL_PROFILE"
+  if profile == "qwen36":
+    if "$GUARD_128_PP_PASS" != "true": labels.append("regression-128-pp")
+    if "$GUARD_512_PP_PASS" != "true": labels.append("regression-512-pp")
+    if "$GUARD_4K_PP_PASS" != "true": labels.append("regression-4k-pp")
+    if "$GUARD_16K_PP_PASS" != "true": labels.append("regression-16k-pp")
+    if "$GUARD_32K_PP_PASS" != "true": labels.append("regression-32k-pp")
+  else:
+    if "$GUARD_4K_PP_PASS" != "true": labels.append("regression-4k-pp")
+    if "$GUARD_32K_PP_PASS" != "true": labels.append("regression-32k-pp")
+    if "$GUARD_64K_PP_PASS" != "true": labels.append("regression-64k-pp")
+    if "$GUARD_128K_PP_PASS" != "true": labels.append("regression-128k-pp")
 print(json.dumps(labels, separators=(",", ":")))
 PY
 )"
@@ -437,7 +505,11 @@ PY
 decode = ["$GUARD_PASS", "$GUARD_512_PASS", "$GUARD_4K_PASS", "$GUARD_16K_PASS", "$GUARD_32K_PASS", "$GUARD_64K_PASS", "$GUARD_128K_PASS"]
 pp = []
 if "$EVAL_PREFILL" == "1":
-    pp = ["$GUARD_4K_PP_PASS", "$GUARD_32K_PP_PASS", "$GUARD_64K_PP_PASS", "$GUARD_128K_PP_PASS"]
+    if "$PREFILL_PROFILE" == "qwen36":
+        pp = ["$GUARD_128_PP_PASS", "$GUARD_512_PP_PASS", "$GUARD_4K_PP_PASS",
+              "$GUARD_16K_PP_PASS", "$GUARD_32K_PP_PASS"]
+    else:
+        pp = ["$GUARD_4K_PP_PASS", "$GUARD_32K_PP_PASS", "$GUARD_64K_PP_PASS", "$GUARD_128K_PP_PASS"]
 print("true" if all(x == "true" for x in decode + pp) else "false")
 PY
 )"
@@ -546,24 +618,42 @@ if "$EVAL_MODE" != "short":
     "guard_128k_pass": "$GUARD_128K_PASS" == "true",
   })
   if "$EVAL_PREFILL" == "1":
-    data.update({
+    prefill = {
       "eval_prefill": True,
+      "prefill_profile": "$PREFILL_PROFILE",
       "score_prefill_context": int("$PREFILL_SELECTED_CTX"),
       "best_prefill_context_label": "$PREFILL_SELECTED_LABEL",
       "prefill_context_gains_pct": json.loads('''$PREFILL_CONTEXT_GAINS_JSON'''),
       "ctx_4096_pp_tps": round(float("$GUARD_4K_PP_TPS"), 2),
-      "ctx_32768_pp_tps": round(float("$GUARD_32K_PP_TPS"), 2),
-      "ctx_65536_pp_tps": round(float("$GUARD_64K_PP_TPS"), 2),
-      "ctx_131072_pp_tps": round(float("$GUARD_128K_PP_TPS"), 2),
       "guard_4k_pp_baseline": round(float("$GUARD_4K_PP_BASELINE"), 2),
       "guard_4k_pp_pass": "$GUARD_4K_PP_PASS" == "true",
       "guard_32k_pp_baseline": round(float("$GUARD_32K_PP_BASELINE"), 2),
       "guard_32k_pp_pass": "$GUARD_32K_PP_PASS" == "true",
-      "guard_64k_pp_baseline": round(float("$GUARD_64K_PP_BASELINE"), 2),
-      "guard_64k_pp_pass": "$GUARD_64K_PP_PASS" == "true",
-      "guard_128k_pp_baseline": round(float("$GUARD_128K_PP_BASELINE"), 2),
-      "guard_128k_pp_pass": "$GUARD_128K_PP_PASS" == "true",
-    })
+    }
+    if "$PREFILL_PROFILE" == "qwen36":
+      prefill.update({
+        "ctx_128_pp_tps": round(float("$GUARD_128_PP_TPS"), 2),
+        "ctx_512_pp_tps": round(float("$GUARD_512_PP_TPS"), 2),
+        "ctx_16384_pp_tps": round(float("$GUARD_16K_PP_TPS"), 2),
+        "ctx_32768_pp_tps": round(float("$GUARD_32K_PP_TPS"), 2),
+        "guard_128_pp_baseline": round(float("$GUARD_128_PP_BASELINE"), 2),
+        "guard_128_pp_pass": "$GUARD_128_PP_PASS" == "true",
+        "guard_512_pp_baseline": round(float("$GUARD_512_PP_BASELINE"), 2),
+        "guard_512_pp_pass": "$GUARD_512_PP_PASS" == "true",
+        "guard_16k_pp_baseline": round(float("$GUARD_16K_PP_BASELINE"), 2),
+        "guard_16k_pp_pass": "$GUARD_16K_PP_PASS" == "true",
+      })
+    else:
+      prefill.update({
+        "ctx_32768_pp_tps": round(float("$GUARD_32K_PP_TPS"), 2),
+        "ctx_65536_pp_tps": round(float("$GUARD_64K_PP_TPS"), 2),
+        "ctx_131072_pp_tps": round(float("$GUARD_128K_PP_TPS"), 2),
+        "guard_64k_pp_baseline": round(float("$GUARD_64K_PP_BASELINE"), 2),
+        "guard_64k_pp_pass": "$GUARD_64K_PP_PASS" == "true",
+        "guard_128k_pp_baseline": round(float("$GUARD_128K_PP_BASELINE"), 2),
+        "guard_128k_pp_pass": "$GUARD_128K_PP_PASS" == "true",
+      })
+    data.update(prefill)
 print(json.dumps(data, separators=(",", ":")))
 PY
 )"
@@ -582,7 +672,11 @@ pp4k=float("$GUARD_4K_PP_TPS"); basepp4k=float("$GUARD_4K_PP_BASELINE")
 pp32k=float("$GUARD_32K_PP_TPS"); basepp32k=float("$GUARD_32K_PP_BASELINE")
 pp64k=float("$GUARD_64K_PP_TPS"); basepp64k=float("$GUARD_64K_PP_BASELINE")
 pp128k=float("$GUARD_128K_PP_TPS"); basepp128k=float("$GUARD_128K_PP_BASELINE")
+pp128=float("$GUARD_128_PP_TPS"); basepp128=float("$GUARD_128_PP_BASELINE")
+pp512=float("$GUARD_512_PP_TPS"); basepp512=float("$GUARD_512_PP_BASELINE")
+pp16k=float("$GUARD_16K_PP_TPS"); basepp16k=float("$GUARD_16K_PP_BASELINE")
 eval_prefill = "$EVAL_PREFILL" == "1"
+prefill_profile = "$PREFILL_PROFILE"
 reasons = []
 if base > 0 and guard < base * tol:
     reasons.append(f"128-token decode no-regression gate: {guard:.2f} tok/s < {tol:.0%} of main {base:.2f} tok/s")
@@ -599,14 +693,26 @@ if base64k > 0 and guard64k < base64k * tol64k:
 if base128k > 0 and guard128k < base128k * tol128k:
     reasons.append(f"128k-context decode no-regression gate: {guard128k:.2f} tok/s < {tol128k:.0%} of main {base128k:.2f} tok/s")
 if eval_prefill:
-    if basepp4k > 0 and pp4k < basepp4k * tol4k:
-        reasons.append(f"4k-context prefill no-regression gate: {pp4k:.2f} pp tok/s < {tol4k:.0%} of main {basepp4k:.2f} pp tok/s")
-    if basepp32k > 0 and pp32k < basepp32k * tol32k:
-        reasons.append(f"32k-context prefill no-regression gate: {pp32k:.2f} pp tok/s < {tol32k:.0%} of main {basepp32k:.2f} pp tok/s")
-    if basepp64k > 0 and pp64k < basepp64k * tol64k:
-        reasons.append(f"64k-context prefill no-regression gate: {pp64k:.2f} pp tok/s < {tol64k:.0%} of main {basepp64k:.2f} pp tok/s")
-    if basepp128k > 0 and pp128k < basepp128k * tol128k:
-        reasons.append(f"128k-context prefill no-regression gate: {pp128k:.2f} pp tok/s < {tol128k:.0%} of main {basepp128k:.2f} pp tok/s")
+    if prefill_profile == "qwen36":
+        if basepp128 > 0 and pp128 < basepp128 * tol:
+            reasons.append(f"128-context prefill no-regression gate: {pp128:.2f} pp tok/s < {tol:.0%} of main {basepp128:.2f} pp tok/s")
+        if basepp512 > 0 and pp512 < basepp512 * tol512:
+            reasons.append(f"512-context prefill no-regression gate: {pp512:.2f} pp tok/s < {tol512:.0%} of main {basepp512:.2f} pp tok/s")
+        if basepp4k > 0 and pp4k < basepp4k * tol4k:
+            reasons.append(f"4k-context prefill no-regression gate: {pp4k:.2f} pp tok/s < {tol4k:.0%} of main {basepp4k:.2f} pp tok/s")
+        if basepp16k > 0 and pp16k < basepp16k * tol16k:
+            reasons.append(f"16k-context prefill no-regression gate: {pp16k:.2f} pp tok/s < {tol16k:.0%} of main {basepp16k:.2f} pp tok/s")
+        if basepp32k > 0 and pp32k < basepp32k * tol32k:
+            reasons.append(f"32k-context prefill no-regression gate: {pp32k:.2f} pp tok/s < {tol32k:.0%} of main {basepp32k:.2f} pp tok/s")
+    else:
+        if basepp4k > 0 and pp4k < basepp4k * tol4k:
+            reasons.append(f"4k-context prefill no-regression gate: {pp4k:.2f} pp tok/s < {tol4k:.0%} of main {basepp4k:.2f} pp tok/s")
+        if basepp32k > 0 and pp32k < basepp32k * tol32k:
+            reasons.append(f"32k-context prefill no-regression gate: {pp32k:.2f} pp tok/s < {tol32k:.0%} of main {basepp32k:.2f} pp tok/s")
+        if basepp64k > 0 and pp64k < basepp64k * tol64k:
+            reasons.append(f"64k-context prefill no-regression gate: {pp64k:.2f} pp tok/s < {tol64k:.0%} of main {basepp64k:.2f} pp tok/s")
+        if basepp128k > 0 and pp128k < basepp128k * tol128k:
+            reasons.append(f"128k-context prefill no-regression gate: {pp128k:.2f} pp tok/s < {tol128k:.0%} of main {basepp128k:.2f} pp tok/s")
 res = {
   "commit": "$COMMIT",
   "tps": round(tps, 2),
