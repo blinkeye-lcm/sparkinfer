@@ -46,10 +46,20 @@ int main(int argc, char** argv) {
     auto rt = sparkinfer::Runtime::create({}); rt->initialize();
     sparkinfer::KVCacheConfig kvc;
     kvc.num_layers = cfg.n_layers; kvc.num_kv_heads = cfg.n_kv_heads; kvc.head_dim = cfg.head_dim; kvc.block_size = 16;
-    // int8 KV is the Qwen3-MoE head_dim=128 tensor-core path; Qwen3.6 (hybrid, gated head_dim=256)
-    // writes bf16 KV. Scoring with int8 KV on the hybrid model corrupts attention -> false accuracy
-    // divergence vs llama.cpp. Mirror generate.cpp: bf16 KV for hybrid.
-    // Context-adaptive int8 KV for hybrid (>= 4k fed length) so accuracy gate matches bench at 4k.
+    // int8 KV default mirrors the SHIPPED config, so scoring reflects what actually runs:
+    //   non-hybrid (Qwen3-MoE, hd128) always ships int8 KV -> default int8.
+    //   hybrid (Qwen3.6/Qwythos, hd256) ships int8 KV at ctx >= 4096 (bench.cpp:130,
+    //     server/model_engine.cpp:80) -> context-adaptive on fed length.
+    // SPARKINFER_KV_INT8 forces it either way, which is how accuracy.sh drives its two passes:
+    // the short prompt (< 4096) scores the hybrid bf16 path, the long probe forces int8 on.
+    //
+    // History: this comment used to claim "Qwen3.6 (hybrid, gated head_dim=256) writes bf16 KV ...
+    // scoring with int8 KV corrupts attention -> FALSE accuracy divergence" (#227). The divergence
+    // was REAL, not false — the gated int8 QK-norm+RoPE kernel left 75% of every Q vector stale
+    // (#517). The gate feeding only ~101 tokens meant hybrid always landed on the bf16 side of this
+    // ternary, hiding that bug for two weeks and creating the blind spot #388 and #393 also shipped
+    // through. Do NOT narrow this to dodge a divergence: if the int8 path disagrees with llama.cpp,
+    // that is the gate working — see the long-context probe in accuracy.sh.
     { const char* e = getenv("SPARKINFER_KV_INT8");
       kvc.int8_kv = e ? (e[0] != '0') : (cfg.hybrid ? ((argc - 3) >= 4096) : true); }
     const size_t epb = (size_t)16 * cfg.n_kv_heads * cfg.head_dim;
