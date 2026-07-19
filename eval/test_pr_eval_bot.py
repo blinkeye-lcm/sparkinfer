@@ -921,6 +921,34 @@ class OnlyPrsAndBaselineCacheTest(unittest.TestCase):
         self.assertEqual(bot._parse_only_prs(0, "387, 389"), {387, 389})
         self.assertEqual(bot._parse_only_prs(387, "389"), {387, 389})
 
+    def test_fill_pp_allows_partial_q36_when_128_pp_zero(self):
+        """Qwen3.6 baseline often has ctx_128_pp_tps=0; must still keep 512/4k/16k/32k pp."""
+        q36 = {"128_pp": 0.0, "512_pp": 0.0, "4k_pp": 0.0, "16k_pp": 0.0, "32k_pp": 0.0,
+               "128": 0, "512": 0, "4k": 0, "16k": 0, "32k": 0}
+        q35 = {"128": 0, "4k": 0, "32k": 0, "64k": 0,
+               "4k_pp": 0.0, "32k_pp": 0.0, "64k_pp": 0.0, "128k_pp": 0.0}
+        bres = {
+            "score_qwen36": {
+                "ctx_128_tps": 475.97, "ctx_512_tps": 469.85, "ctx_4096_tps": 450.96,
+                "ctx_16384_tps": 434.42, "ctx_32768_tps": 406.66,
+                "ctx_128_pp_tps": 0.0, "ctx_512_pp_tps": 534.53,
+                "ctx_4096_pp_tps": 521.72, "ctx_16384_pp_tps": 504.37,
+                "ctx_32768_pp_tps": 484.09,
+            },
+            "score_qwen35": {
+                "ctx_128_tps": 293.92, "ctx_4096_tps": 283.93,
+                "ctx_32768_tps": 282.28, "ctx_65536_tps": 282.28,
+                "ctx_4096_pp_tps": 15665.6, "ctx_32768_pp_tps": 17280.6,
+                "ctx_65536_pp_tps": 17432.4, "ctx_131072_pp_tps": 287.3,
+            },
+        }
+        self.assertTrue(bot._apply_bidir_ctx_from_bres(bres, q36, q35))
+        self.assertEqual(q36["128_pp"], 0.0)
+        self.assertAlmostEqual(q36["512_pp"], 534.53)
+        self.assertAlmostEqual(q36["4k_pp"], 521.72)
+        self.assertAlmostEqual(q36["32k_pp"], 484.09)
+        self.assertAlmostEqual(q35["4k_pp"], 15665.6)
+
     def test_baseline_cache_roundtrip(self):
         with tempfile.TemporaryDirectory() as td:
             cache_path = os.path.join(td, ".baseline_cache.json")

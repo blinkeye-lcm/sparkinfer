@@ -781,14 +781,20 @@ if prefill_raw.startswith("RESULT_JSON "):
     pf = json.loads(prefill_raw[len("RESULT_JSON "):])
     res["prefill_tps"] = pf.get("tps", 0)
     res["prefill_frontier_tps"] = pf.get("frontier_tps", 0)
-    res["prefill_label"] = pf.get("label")
+    # Prefer speed_label when correctness REJECTed the prefill call — overall stays REJECT,
+    # but real prefill gains still get annotated (eval-prefill:XL).
+    res["prefill_label"] = pf.get("speed_label") or pf.get("label")
     res["prefill_delta_tps"] = pf.get("delta_tps")
     res["prefill_pct_over_frontier"] = pf.get("pct_over_frontier")
     res["prefill_pct_of_llama"] = pf.get("pct_of_llama")
     res["prefill_effective_pct"] = pf.get("effective_pct")
     if pf.get("difficulty_mult") is not None:
         res["prefill_difficulty_mult"] = pf["difficulty_mult"]
-    if tier_rank(pf.get("label")) > tier_rank(res.get("label")):
+    # Never promote prefill over a correctness REJECT headline (pass=false stays merge-blocking).
+    pf_pass_label = pf.get("label")
+    if res.get("label") == "REJECT" or pf_pass_label == "REJECT":
+        res["score_metric"] = "decode"
+    elif tier_rank(pf_pass_label) > tier_rank(res.get("label")):
         res["decode_label"] = res.get("label")
         res["decode_tps"] = res.get("tps")
         res["decode_score_context"] = res.get("score_context")

@@ -20,9 +20,12 @@ def tier_rank(label):
 def merge_decode_prefill(decode, prefill):
     res = dict(decode)
     pf = dict(prefill)
-    res["prefill_label"] = pf.get("label")
+    res["prefill_label"] = pf.get("speed_label") or pf.get("label")
     res["prefill_tps"] = pf.get("tps")
-    if tier_rank(pf.get("label")) > tier_rank(res.get("label")):
+    pf_pass_label = pf.get("label")
+    if res.get("label") == "REJECT" or pf_pass_label == "REJECT":
+        res["score_metric"] = "decode"
+    elif tier_rank(pf_pass_label) > tier_rank(res.get("label")):
         res["decode_label"] = res.get("label")
         res["decode_tps"] = res.get("tps")
         res["decode_score_context"] = res.get("score_context")
@@ -68,6 +71,20 @@ class PrefillLabelMergeTest(unittest.TestCase):
         gains = {c["label"]: c["gain"] for c in data["contexts"] if c["tps"] > 0}
         self.assertIn("4k-context", gains)
         self.assertGreater(gains["4k-context"], 10.0)
+
+    def test_correctness_reject_still_reports_prefill_xl_speed_label(self):
+        """PR #403-shaped: top1 fails but Qwen3.6 prefill is a huge gain — keep REJECT headline,
+        annotate eval-prefill from speed_label."""
+        decode = {"label": "REJECT", "pass": False, "tps": 407.54, "frontier_tps": 406.66,
+                  "reason": "correctness gate: top1=0.8549"}
+        prefill = {"label": "REJECT", "pass": False, "tps": 13531.5, "frontier_tps": 484.09,
+                   "speed_label": "XL", "delta_tps": 13047.41, "pct_over_frontier": 2695.2,
+                   "score_prefill_context": 32768, "best_prefill_context_label": "32k-context"}
+        out = merge_decode_prefill(decode, prefill)
+        self.assertEqual(out["label"], "REJECT")
+        self.assertEqual(out["prefill_label"], "XL")
+        self.assertEqual(out["score_metric"], "decode")
+        self.assertEqual(out["prefill_tps"], 13531.5)
 
     def test_prefill_L_beats_decode_none(self):
         out = merge_decode_prefill(

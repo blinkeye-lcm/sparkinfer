@@ -133,14 +133,17 @@ def _apply_bidir_ctx_from_bres(bres, q36, q35):
         return True
 
     def _fill_pp(score, store, keys, mapping):
+        """Fill whichever prefill contexts measured >0. Qwen3.6 often has 128_pp=0; requiring
+        every key used to abort the whole fill and leave all baselines at 0 (PR #403)."""
         if not score:
             return False
+        got = False
         for k in keys:
             v = float(score.get(mapping[k]) or 0)
-            if v <= 0:
-                return False
-            store[k] = v
-        return True
+            if v > 0:
+                store[k] = v
+                got = True
+        return got
 
     got36 = _fill(bres.get("score_qwen36"), q36, ("128", "512", "4k", "16k", "32k"))
     got35 = _fill(bres.get("score_qwen35"), q35, ("128", "4k", "32k", "64k"))
@@ -2496,6 +2499,9 @@ def main():
             QWEN36_BASE.update(cache["q36"])
             QWYTHOS_BASE.update(cache["q35"])
         bres = cache["bres"]
+        # Re-derive pp from bres so older caches that zeroed all q36 pp (128_pp=0 abort) self-heal.
+        if args.bidir and bres:
+            _apply_bidir_ctx_from_bres(bres, QWEN36_BASE, QWYTHOS_BASE)
         print(f">> reusing cached same-box baseline from {cache['ts']} ({box_id}, main={main_commit or '?'})")
     elif args.skip_baseline:
         print(f">> --skip-baseline: no valid cache for {box_id} — aborting")
@@ -2679,7 +2685,8 @@ def main():
             print("--- dry-run, not posting ---\n" + body); continue
         if label:
             cur = labels_on(args.repo, num)
-            for lab in {l for l in cur if l.startswith("eval:") or l.startswith("eval-qwen")}:
+            for lab in {l for l in cur if l.startswith("eval:") or l.startswith("eval-qwen")
+                        or l.startswith("eval-prefill:")}:
                 remove_label(args.repo, num, lab)
             add_label(args.repo, num, f"eval:{label}")
             if res and res.get("mode") == "bidir" and not res.get("infra_error"):
@@ -2687,6 +2694,16 @@ def main():
                     add_label(args.repo, num, f"eval-qwen35:{res['label_qwen35']}")
                 if res.get("label_qwen36"):
                     add_label(args.repo, num, f"eval-qwen36:{res['label_qwen36']}")
+                # Annotate verified prefill progress even when headline is REJECT (correctness).
+                prefill_tiers = []
+                for block in (res.get("score_qwen35") or {}, res.get("score_qwen36") or {}, res):
+                    pl = block.get("prefill_label")
+                    if pl in SPEEDUP_LABELS:
+                        prefill_tiers.append(pl)
+                if prefill_tiers:
+                    best_pf = max(prefill_tiers, key=lambda t: (
+                        {"XL": 6, "L": 5, "M": 4, "S": 3, "XS": 2}.get(t, 0)))
+                    add_label(args.repo, num, f"eval-prefill:{best_pf}")
             elif res and res.get("infra_error"):
                 add_label(args.repo, num, REEVALUATE_LABEL)
             apply_context_label(args.repo, num, cur, res.get("best_context_label"))

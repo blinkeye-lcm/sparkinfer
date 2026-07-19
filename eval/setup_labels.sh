@@ -8,6 +8,8 @@ declare -A C=( [XL]=0E8A16 [L]=1D76DB [M]=5319E7 [S]=FBCA04 [XS]=BFD4F2
 for k in "${!C[@]}"; do
   gh label create "eval:$k" -R "$REPO" --color "${C[$k]}" \
      --description "sparkinfer auto-eval verdict: $k" --force >/dev/null
+  gh label create "eval-prefill:$k" -R "$REPO" --color "${C[$k]}" \
+     --description "sparkinfer prefill speed tier: $k (may annotate REJECT headlines)" --force >/dev/null
 done
 
 # subsystem / emission-weight labels — assigned deterministically from changed paths (no AI)

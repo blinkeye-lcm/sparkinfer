@@ -32,13 +32,18 @@ def score(tps, frontier=100.0, ceiling=200.0, top1=0.97, kl=0.02, commit="deadbe
 
 class LabelPolicyTest(unittest.TestCase):
     def test_correctness_gate_rejects_bad_accuracy(self):
+        # +30 over frontier=100 clears significance; llama-anchored tier is M (~8% of 365.85).
         low_top1 = score(130, top1=0.89, kl=0.02)
         self.assertEqual(low_top1["label"], "REJECT")
         self.assertFalse(low_top1["pass"])
+        # Speed tier still reported so prefill/decode progress can be annotated.
+        self.assertEqual(low_top1["speed_label"], "M")
+        self.assertEqual(low_top1["pct_over_frontier"], 30.0)
 
         high_kl = score(130, top1=0.97, kl=0.21)
         self.assertEqual(high_kl["label"], "REJECT")
         self.assertFalse(high_kl["pass"])
+        self.assertEqual(high_kl["speed_label"], "M")
 
     def test_significance_gate_is_strictly_above_two_percent(self):
         exact_floor = score(102.0)

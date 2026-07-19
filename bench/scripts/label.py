@@ -73,40 +73,65 @@ def difficulty_mult(frontier):
 res = {"commit": commit, "tps": round(tps, 2), "top1": round(top1, 4),
        "kl": round(kl, 4), "frontier_tps": round(frontier, 2)}
 
-if top1 < TOP1_BAR or kl > KL_BAR:
-    res.update(pass_=False, label="REJECT",
-               reason=f"correctness gate: top1={top1} (need >= {TOP1_BAR}), kl={kl} (need <= {KL_BAR})")
-elif frontier <= 0:
-    res.update(pass_=True, label="BASELINE", note="no frontier set; this submission becomes it")
-else:
+
+def _speed_tier_fields(tps, frontier, ceiling):
+    """Compute speed-tier fields as if correctness already passed. Used for the headline label
+    and, on correctness REJECT, for speed_label so real prefill/decode gains still get annotated."""
+    out = {}
+    if frontier <= 0:
+        out["label"] = "BASELINE"
+        return out
     delta = tps - frontier
     g = delta / frontier                                # relative speedup over the frontier — SIGNIFICANCE basis
     if g <= SIG:
-        res.update(pass_=True, label="none", delta_tps=round(delta, 2),
+        out.update(label="none", delta_tps=round(delta, 2),
                    pct_over_frontier=round(100 * g, 1),
                    note="within significance gate — not a verified improvement")
-    else:
-        # FAIR label tier: size the gain against the llama.cpp reference (DIFF_REF — a constant maturity
-        # anchor for EVERY model), not the possibly-unoptimized frontier. So the same tok/s of real work
-        # earns the same tier whether the model started at 23 or 493 tok/s — an un-optimized model can no
-        # longer mint XLs from low-hanging fruit while a mature one (past llama) can't clear XS. Significance
-        # still gates on raw %-over-frontier above (a gain must beat the current best); only the TIER is
-        # llama-anchored. Past-llama difficulty boost (Option B) is unchanged. DIFF_REF<=0 -> legacy basis.
-        ref = DIFF_REF if DIFF_REF > 0 else frontier
-        g_fair = delta / ref
-        D = difficulty_mult(frontier)                   # hard-gain boost once past the reference
-        g_eff = min(g_fair * D, 2 * g)                  # strict cap: tier credit ≤ 2× measured speedup
-        # A verified improvement over the frontier floors at XS (real but small); the higher tiers
-        # (S/M/L/XL) are earned by the llama-anchored size. So "none" always means "not a verified
-        # improvement", never "real but tiny".
-        label = next((l for thr, l in BUCKETS if g_eff >= thr), "XS")
-        res.update(pass_=True, label=label, delta_tps=round(delta, 2),
-                   pct_over_frontier=round(100 * g, 1),      # RAW measured speedup (honest reporting)
-                   pct_of_llama=round(100 * g_fair, 1),      # gain as a fraction of llama.cpp — the label basis
-                   pct_of_ceiling=round(100 * tps / ceiling, 1) if ceiling > 0 else None)
-        res["effective_pct"] = round(100 * g_eff, 1)
-        if D != 1.0:                                    # transparency: expose the boost in the verdict
-            res["difficulty_mult"] = round(D, 2)
+        return out
+    # FAIR label tier: size the gain against the llama.cpp reference (DIFF_REF — a constant maturity
+    # anchor for EVERY model), not the possibly-unoptimized frontier. So the same tok/s of real work
+    # earns the same tier whether the model started at 23 or 493 tok/s — an un-optimized model can no
+    # longer mint XLs from low-hanging fruit while a mature one (past llama) can't clear XS. Significance
+    # still gates on raw %-over-frontier above (a gain must beat the current best); only the TIER is
+    # llama-anchored. Past-llama difficulty boost (Option B) is unchanged. DIFF_REF<=0 -> legacy basis.
+    ref = DIFF_REF if DIFF_REF > 0 else frontier
+    g_fair = delta / ref
+    D = difficulty_mult(frontier)                       # hard-gain boost once past the reference
+    g_eff = min(g_fair * D, 2 * g)                      # strict cap: tier credit ≤ 2× measured speedup
+    # A verified improvement over the frontier floors at XS (real but small); the higher tiers
+    # (S/M/L/XL) are earned by the llama-anchored size. So "none" always means "not a verified
+    # improvement", never "real but tiny".
+    label = next((l for thr, l in BUCKETS if g_eff >= thr), "XS")
+    out.update(label=label, delta_tps=round(delta, 2),
+               pct_over_frontier=round(100 * g, 1),      # RAW measured speedup (honest reporting)
+               pct_of_llama=round(100 * g_fair, 1),      # gain as a fraction of llama.cpp — the label basis
+               pct_of_ceiling=round(100 * tps / ceiling, 1) if ceiling > 0 else None)
+    out["effective_pct"] = round(100 * g_eff, 1)
+    if D != 1.0:                                        # transparency: expose the boost in the verdict
+        out["difficulty_mult"] = round(D, 2)
+    return out
+
+
+if top1 < TOP1_BAR or kl > KL_BAR:
+    res.update(pass_=False, label="REJECT",
+               reason=f"correctness gate: top1={top1} (need >= {TOP1_BAR}), kl={kl} (need <= {KL_BAR})")
+    # Keep reporting the speed tier that would have been earned — overall stays REJECT / not mergeable,
+    # but prefill (or decode) progress is still labeled (e.g. eval-prefill:XL on PR #403).
+    if frontier > 0 and tps > 0:
+        speed = _speed_tier_fields(tps, frontier, ceiling)
+        res["speed_label"] = speed["label"]
+        for k in ("delta_tps", "pct_over_frontier", "pct_of_llama", "pct_of_ceiling",
+                  "effective_pct", "difficulty_mult", "note"):
+            if k in speed and speed[k] is not None:
+                res[k] = speed[k]
+elif frontier <= 0:
+    res.update(pass_=True, label="BASELINE", note="no frontier set; this submission becomes it")
+    res["speed_label"] = "BASELINE"
+else:
+    speed = _speed_tier_fields(tps, frontier, ceiling)
+    res.update(pass_=True, **{k: v for k, v in speed.items() if k != "label"})
+    res["label"] = speed["label"]
+    res["speed_label"] = speed["label"]
 
 # Soft accuracy flag: passed the gate but above the preferred KL ceiling — accepted, margin is thin.
 if res.get("label") != "REJECT" and kl > KL_PREFER:
