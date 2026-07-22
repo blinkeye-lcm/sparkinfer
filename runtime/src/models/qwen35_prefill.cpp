@@ -246,6 +246,12 @@ int prefill_batched_run(const Qwen35PrefillCtx& s, const int* prompt_ids, int n)
         const char* e = getenv("SPARKINFER_PREFILL_MOE_FUSED");
         return e && e[0] == '1';
     }();
+    // Fused gate+up GEMM (BM=16): one A staging pass per K-tile. Default ON at short-N.
+    const bool moe_fuse_gu = [&]{
+        if (!moe || moe_bm != 16) return false;
+        const char* e = getenv("SPARKINFER_PREFILL_MOE_FUSE_GU");
+        return !e || e[0] != '0';
+    }();
     // Expert-group L2 path: dequant G experts (~G*3 MB) then GEMM that group while hot in
     // L2. Wins at short-N (N<=512, G=32 → +5% @512); bulk is faster once tiles fill. Default
     // ON for N<=512. SPARKINFER_PREFILL_MOE_SERIAL=0/1 overrides; GROUP default 32.
@@ -254,6 +260,12 @@ int prefill_batched_run(const Qwen35PrefillCtx& s, const int* prompt_ids, int n)
         const char* e = getenv("SPARKINFER_PREFILL_MOE_SERIAL");
         if (e) return e[0] != '0';
         return N <= 512;
+    }();
+    // Device tilemap + mask dequant: skip per-layer D2H counts sync. Default ON at short-N.
+    const bool moe_gpu = [&]{
+        if (!moe_serial) return false;
+        const char* e = getenv("SPARKINFER_PREFILL_MOE_GPU");
+        return !e || e[0] != '0';
     }();
     const int moe_group = [&]{
         const char* e = getenv("SPARKINFER_PREFILL_MOE_GROUP");
@@ -605,6 +617,66 @@ int prefill_batched_run(const Qwen35PrefillCtx& s, const int* prompt_ids, int n)
                     const int bs = (qtype == 12) ? 144 : (qtype == 13) ? 176 : 210;
                     return (size_t)(cols >> 8) * (size_t)bs;
                 };
+                const size_t g_rb = q_row_bytes(w.gate_qtype, H);
+                const size_t u_rb = q_row_bytes(w.up_qtype, H);
+                const size_t d_rb = q_row_bytes(w.down_qtype, mffn);
+                const size_t g_eb = (size_t)mffn * g_rb;
+                const size_t u_eb = (size_t)mffn * u_rb;
+                const size_t d_eb = (size_t)H * d_rb;
+                const int G = moe_group;
+                pf_cu(cudaMemsetAsync(routed_f32, 0, (size_t)N * H * sizeof(float), st),
+                      "routed zero");
+
+                if (moe_gpu && !moe_overlap) {
+                    // No D2H counts sync: device tilemap + mask dequant per expert group.
+                    for (int base = 0; base < E; base += G) {
+                        const int n_in = (E - base < G) ? (E - base) : G;
+                        kernels::launch_pfm_group_tilemap(
+                            mcounts, tilemap, d_ntiles, base, n_in, moe_bm, max_tiles, st);
+                        const void* ge0 = (const char*)w.gate_q + (size_t)base * g_eb;
+                        const void* ue0 = (const char*)w.up_q + (size_t)base * u_eb;
+                        if (w.gate_qtype == w.up_qtype) {
+                            kernels::launch_gguf_dequant_rows_i8_mask_pair(
+                                w.gate_qtype, ge0, Wg_i8, swg, ue0, Wu_i8, swu,
+                                mcounts, base, n_in, mffn, H, g_eb, u_eb, st);
+                        } else {
+                            kernels::launch_gguf_dequant_rows_i8_mask(
+                                w.gate_qtype, ge0, Wg_i8, swg, mcounts, base, n_in, mffn, H,
+                                g_eb, st);
+                            kernels::launch_gguf_dequant_rows_i8_mask(
+                                w.up_qtype, ue0, Wu_i8, swu, mcounts, base, n_in, mffn, H,
+                                u_eb, st);
+                        }
+                        if (moe_fuse_gu) {
+                            kernels::launch_pfm_moe_gemm_i8_gate_up_bm16(
+                                mA_i8, msx, Wg_i8, swg, Wu_i8, swu, pair_tok, moffsets, tilemap,
+                                d_ntiles, hg, hu, mffn, H, max_tiles, base, st);
+                        } else {
+                            kernels::launch_pfm_moe_gemm_i8_bm_base(
+                                mA_i8, msx, Wg_i8, swg, pair_tok, pair_w, moffsets, tilemap,
+                                d_ntiles, hg, nullptr, mffn, H, max_tiles, moe_bm, base,
+                                true, false, st);
+                            kernels::launch_pfm_moe_gemm_i8_bm_base(
+                                mA_i8, msx, Wu_i8, swu, pair_tok, pair_w, moffsets, tilemap,
+                                d_ntiles, hu, nullptr, mffn, H, max_tiles, moe_bm, base,
+                                true, false, st);
+                        }
+                    }
+                    kernels::launch_prefill_swiglu(hg, hu, hh, (long)P * mffn, st);
+                    kernels::launch_prefill_quantize_rows_i8(hh, h_i8, sh, P, mffn, st);
+                    for (int base = 0; base < E; base += G) {
+                        const int n_in = (E - base < G) ? (E - base) : G;
+                        kernels::launch_pfm_group_tilemap(
+                            mcounts, tilemap, d_ntiles, base, n_in, moe_bm, max_tiles, st);
+                        const void* de0 = (const char*)w.down_q + (size_t)base * d_eb;
+                        kernels::launch_gguf_dequant_rows_i8_mask(
+                            w.down_qtype, de0, Wd_i8, swd, mcounts, base, n_in, H, mffn, d_eb, st);
+                        kernels::launch_pfm_moe_gemm_i8_bm_base(
+                            h_i8, sh, Wd_i8, swd, pair_tok, pair_w, moffsets, tilemap, d_ntiles,
+                            nullptr, routed_f32, H, mffn, max_tiles, moe_bm, base,
+                            false, true, st);
+                    }
+                } else {
                 int h_counts_stack[256];
                 int* h_counts = h_counts_stack;
                 // Pinned counts make the D2H sync cheaper (pageable stalls the GPU).
@@ -617,17 +689,15 @@ int prefill_batched_run(const Qwen35PrefillCtx& s, const int* prompt_ids, int n)
                 pf_cu(cudaMemcpyAsync(h_counts, mcounts, (size_t)E * sizeof(int),
                                       cudaMemcpyDeviceToHost, st), "moe counts D2H");
                 pf_cu(cudaStreamSynchronize(st), "moe serial sync");
-                const size_t g_rb = q_row_bytes(w.gate_qtype, H);
-                const size_t u_rb = q_row_bytes(w.up_qtype, H);
-                const size_t d_rb = q_row_bytes(w.down_qtype, mffn);
-                const int G = moe_group;
 
                 struct ActiveGroup {
                     int base, n_in, ntm, tm_off, n_live, live_off;
                     std::vector<int> tm;
                     std::vector<int> live;
                 };
-                std::vector<ActiveGroup> active;
+                static thread_local std::vector<ActiveGroup> active;
+                static thread_local std::vector<int> h_tm_all, h_nt_all, h_live_all;
+                active.clear();
                 active.reserve((size_t)((E + G - 1) / G));
                 int tm_total = 0;
                 int live_total = 0;
@@ -664,9 +734,9 @@ int prefill_batched_run(const Qwen35PrefillCtx& s, const int* prompt_ids, int n)
                 }
                 const int n_active = (int)active.size();
 
-                std::vector<int> h_tm_all((size_t)2 * std::max(tm_total, 1));
-                std::vector<int> h_nt_all((size_t)std::max(n_active, 1));
-                std::vector<int> h_live_all((size_t)std::max(live_total, 1));
+                h_tm_all.resize((size_t)2 * std::max(tm_total, 1));
+                h_nt_all.resize((size_t)std::max(n_active, 1));
+                h_live_all.resize((size_t)std::max(live_total, 1));
                 for (int gi = 0; gi < n_active; gi++) {
                     const ActiveGroup& ag = active[(size_t)gi];
                     h_nt_all[(size_t)gi] = ag.ntm;
@@ -688,8 +758,9 @@ int prefill_batched_run(const Qwen35PrefillCtx& s, const int* prompt_ids, int n)
                     pf_cu(cudaEventRecord(moe_ev_ready, st), "moe fork");
                     pf_cu(cudaStreamWaitEvent(sa, moe_ev_ready, 0), "moe sa wait");
                     pf_cu(cudaStreamWaitEvent(sb, moe_ev_ready, 0), "moe sb wait");
+                    pf_cu(cudaMemsetAsync(routed_f32, 0, (size_t)N * H * sizeof(float), sa),
+                          "routed zero");
                 }
-                pf_cu(cudaMemsetAsync(routed_f32, 0, (size_t)N * H * sizeof(float), sa), "routed zero");
 
                 int* d_nt_pack = nullptr;
                 if (pack_fit && n_active > 0) {
@@ -855,17 +926,21 @@ int prefill_batched_run(const Qwen35PrefillCtx& s, const int* prompt_ids, int n)
                                               cudaMemcpyHostToDevice, sa), "moe ntm H2D");
                     }
                     dq_gateup(ag);
-                    kernels::launch_pfm_moe_gemm_i8_bm_base(
-                        mA_i8, msx, Wg_i8, swg, pair_tok, pair_w, moffsets, tm, nt,
-                        hg, nullptr, mffn, H, ag.ntm, moe_bm, ag.base,
-                        /*a_indirect=*/true, /*c_scatter=*/false, sa);
-                    kernels::launch_pfm_moe_gemm_i8_bm_base(
-                        mA_i8, msx, Wu_i8, swu, pair_tok, pair_w, moffsets, tm, nt,
-                        hu, nullptr, mffn, H, ag.ntm, moe_bm, ag.base, true, false, sa);
+                    if (moe_fuse_gu) {
+                        kernels::launch_pfm_moe_gemm_i8_gate_up_bm16(
+                            mA_i8, msx, Wg_i8, swg, Wu_i8, swu, pair_tok, moffsets, tm, nt,
+                            hg, hu, mffn, H, ag.ntm, ag.base, sa);
+                    } else {
+                        kernels::launch_pfm_moe_gemm_i8_bm_base(
+                            mA_i8, msx, Wg_i8, swg, pair_tok, pair_w, moffsets, tm, nt,
+                            hg, nullptr, mffn, H, ag.ntm, moe_bm, ag.base,
+                            /*a_indirect=*/true, /*c_scatter=*/false, sa);
+                        kernels::launch_pfm_moe_gemm_i8_bm_base(
+                            mA_i8, msx, Wu_i8, swu, pair_tok, pair_w, moffsets, tm, nt,
+                            hu, nullptr, mffn, H, ag.ntm, moe_bm, ag.base, true, false, sa);
+                    }
                 }
 
-                // down0∥SwiGLU disabled: full-group down dequant on a side stream exceeds the
-                // ~4KB/op decode-poison threshold.
                 kernels::launch_prefill_swiglu(hg, hu, hh, (long)P * mffn, sa);
                 kernels::launch_prefill_quantize_rows_i8(hh, h_i8, sh, P, mffn, sa);
 
@@ -896,17 +971,24 @@ int prefill_batched_run(const Qwen35PrefillCtx& s, const int* prompt_ids, int n)
                     // (cross-stream waits on the decode stream permanently slow graph replay).
                     pf_cu(cudaStreamSynchronize(sa), "moe sa join");
                 }
+                }  // !moe_gpu host tilemap path
             } else {
                 // Bulk: expert weights -> int8 rows ONCE per layer (all 256 experts).
                 kernels::launch_gguf_dequant_rows_i8(w.gate_qtype, w.gate_q, Wg_i8, swg, E * mffn, H, st);
                 kernels::launch_gguf_dequant_rows_i8(w.up_qtype,   w.up_q,   Wu_i8, swu, E * mffn, H, st);
                 kernels::launch_gguf_dequant_rows_i8(w.down_qtype, w.down_q, Wd_i8, swd, E * H, mffn, st);
-                kernels::launch_pfm_moe_gemm_i8_bm(mA_i8, msx, Wg_i8, swg, pair_tok, pair_w, moffsets,
-                                                   tilemap, d_ntiles, hg, nullptr, mffn, H, max_tiles, moe_bm,
-                                                   /*a_indirect=*/true, /*c_scatter=*/false, st);
-                kernels::launch_pfm_moe_gemm_i8_bm(mA_i8, msx, Wu_i8, swu, pair_tok, pair_w, moffsets,
-                                                   tilemap, d_ntiles, hu, nullptr, mffn, H, max_tiles, moe_bm,
-                                                   true, false, st);
+                if (moe_fuse_gu) {
+                    kernels::launch_pfm_moe_gemm_i8_gate_up_bm16(
+                        mA_i8, msx, Wg_i8, swg, Wu_i8, swu, pair_tok, moffsets, tilemap, d_ntiles,
+                        hg, hu, mffn, H, max_tiles, /*e_base=*/0, st);
+                } else {
+                    kernels::launch_pfm_moe_gemm_i8_bm(mA_i8, msx, Wg_i8, swg, pair_tok, pair_w, moffsets,
+                                                       tilemap, d_ntiles, hg, nullptr, mffn, H, max_tiles, moe_bm,
+                                                       /*a_indirect=*/true, /*c_scatter=*/false, st);
+                    kernels::launch_pfm_moe_gemm_i8_bm(mA_i8, msx, Wu_i8, swu, pair_tok, pair_w, moffsets,
+                                                       tilemap, d_ntiles, hu, nullptr, mffn, H, max_tiles, moe_bm,
+                                                       true, false, st);
+                }
                 kernels::launch_prefill_swiglu(hg, hu, hh, (long)P * mffn, st);
                 kernels::launch_prefill_quantize_rows_i8(hh, h_i8, sh, P, mffn, st);
                 pf_cu(cudaMemsetAsync(routed_f32, 0, (size_t)N * H * sizeof(float), st), "routed zero");
