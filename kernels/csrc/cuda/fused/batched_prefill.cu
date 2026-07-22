@@ -65,7 +65,12 @@ __device__ __forceinline__ int pf_swz_e(int e, int row) {
 __device__ __forceinline__ unsigned pf_lds32b(const __nv_bfloat16* p) {
     return *reinterpret_cast<const unsigned*>(p);   // load 2 contiguous bf16 as one 32b operand
 }
-__global__ void pf_gemm_kernel(const __nv_bfloat16* __restrict__ A,
+// The 2 is load-bearing: left to itself nvcc gives this kernel 130 registers, and 256*130 > 65536,
+// so only ONE block is resident per SM. Capping to 2 blocks/SM forces <=128 registers (ptxas: 128,
+// no spills, same 40 KB smem) and doubles occupancy. The wmma MMA schedule is unchanged, so the
+// output is numerically equivalent to before (accuracy gate untouched). This kernel runs every
+// Qwen3.6 GDN/attention projection at batched prefill, where it is the single largest kernel.
+__global__ __launch_bounds__(256, 2) void pf_gemm_kernel(const __nv_bfloat16* __restrict__ A,
                                const __nv_bfloat16* __restrict__ W,
                                __nv_bfloat16* __restrict__ C, int M, int N, int K) {
     using namespace nvcuda;
