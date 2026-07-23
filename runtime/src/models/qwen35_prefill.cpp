@@ -186,12 +186,16 @@ int prefill_batched_run(const Qwen35PrefillCtx& s, const int* prompt_ids, int n)
     // SPARKINFER_PREFILL_FP8_GDN=0 restores the bf16 GDN projections (A/B).
     const char* _pfp8 = getenv("SPARKINFER_PREFILL_FP8_GDN");
     bool use_fp8_gdn = long_bf16 && (!_pfp8 || _pfp8[0] != '0');
-    // MoE (Qwen3.6): optional fp8 (e4m3) attn/GDN projections. Default OFF — opt-in via
-    // SPARKINFER_PREFILL_MOE_FP8=1. Kept off until prefill_check fidelity is clean on main
-    // (see #586); the GPU MoE tilemap bug (#583) already corrupts batched prefill, and FP8
-    // adds further TOP1 loss on top. Dense long-ctx GDN fp8 (PREFILL_FP8_GDN) is unaffected.
+    // MoE (Qwen3.6): run the attn/GDN projections on the fp8 (e4m3) tensor cores instead of
+    // the bf16 wmma GEMM. Default ON again: the #586/#587 prefill_check failures traced to the
+    // opt-in MOE_GPU tilemap path's mask dequant silently no-opping (down cols=mffn declines
+    // the fast path and the returns were ignored -- fix in #593), not to the projection dtype.
+    // On the default host-tilemap path, batched-vs-token top1/KL with fp8 sit inside the bf16
+    // baseline's own run spread at 512..32k prefixes and clear the H3 bars (#588) with margin.
+    // int8 projections stay off for MoE (router flips, as documented for use_i8 above).
+    // SPARKINFER_PREFILL_MOE_FP8=0 restores the bf16 projections (A/B).
     const char* _pmfp8 = getenv("SPARKINFER_PREFILL_MOE_FP8");
-    bool moe_fp8 = moe && _pmfp8 && _pmfp8[0] == '1';
+    bool moe_fp8 = moe && (!_pmfp8 || _pmfp8[0] != '0');
     Arena a8;
     // A_i8 holds the quantized activation. Dense full-i8: non-FFN projs quantize N rows x K(<=H);
     // chunked FFN quantizes at most FC rows x ffn. Long-ctx selective: N*H if attn-i8/fp8-gdn else FC*ffn.
